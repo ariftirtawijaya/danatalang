@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 7 verifies the fix for the axios 401 auto-logout UX regression from iter6. Backend: wrong/missing current_password on PUT /api/auth/profile now returns 400 (was 401); factory-reset wrong password also 400. test_iter6 expectations updated 401->400. Frontend: axios interceptor whitelists /auth/profile, /auth/password, /settings/factory-reset from auto-logout. E2E validated: wrong password shows toast 'Password Anda saat ini salah...' on /profile, no redirect, pk_token intact. Correct password saves, login with new phone works, phone restored to 081200000001. Session expiry with junk token still auto-logouts (redirect to /login). Full backend regression: 88/88 passing (test_iter6_phone_change 11, test_pinjamku_flow, test_iter2_features, test_iter4_rbac_regress).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_phone_change.py",
+    "/app/test_reports/pytest/iter7_full.xml",
+    "/app/test_reports/pytest/iter7_iter6.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "api.js: REAUTH_PATHS whitelist uses url.startsWith and matches axios config.url (relative to baseURL), correctly skipping auto-logout only for the three self-re-auth endpoints while keeping normal 401s (e.g. GET /dashboard with junk token) triggering logout. Verified.",
+    "auth_routes.update_profile now returns HTTP 400 with clear Indonesian message when current_password missing or wrong on phone change — semantically correct because the JWT session itself is valid.",
+    "admin_routes.factory_reset returns 400 for wrong password (consistent with the new re-auth semantics).",
+    "test_iter6_phone_change.py updated (401->400) to reflect new re-auth status."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter6_phone_change.py"],
+  "success_rate": {"backend": "100% (88/88)", "frontend": "100% (wrong-pw toast, correct save, restore, junk-token logout)"},
+  "test_credentials": "Superadmin 081200000001 / Sup3rAdmin!2026 (VERIFIED RESTORED at end of run)",
+  "seed_data_creation": "Test admin/lender accounts created by iter6 fixtures were auto-cleaned; leftover 081299990099/081299990002 from a prior interrupted run were cleaned manually before test start.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The 401 interceptor whitelist is enforced in /app/frontend/src/lib/api.js via REAUTH_PATHS. Any future re-auth endpoint (e.g. TOTP setup) should be added there. Superadmin phone is restored to 081200000001. Do NOT run test_iter3_factory_reset.py (destructive).",
+  "rca of the issue": "Fixed. Root cause was global axios 401 handler treating every 401 as session expiry, but re-auth checks (wrong current_password on /auth/profile) legitimately return 401 while the JWT itself is still valid. Fix combines two safeguards: (1) backend changed to 400 for these self-re-auth failures — semantically accurate; (2) frontend interceptor also whitelists these paths defensively. Both verified end-to-end."
+}

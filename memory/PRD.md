@@ -49,6 +49,13 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - Route `/settings` & `/audit-logs` di frontend di-role-guard superadmin (Admin dialihkan ke dashboard, tab Sistem tidak dirender)
 - Hasil tes: **112/112 backend (iterasi 3)** dan **77/77 (iterasi 4: 70 regresi + 7 RBAC)**, frontend Danger Zone 100%
 
+## Iterasi 5–7 (16 Agustus 2026) — perbaikan bug & self-service Superadmin
+- **Fix "Failed to fetch" di /profile**: service worker v2 hanya meng-intercept request navigasi (mengecualikan `/api/` & `/cdn-cgi/`), plus guard `unhandledrejection` untuk request yang di-abort saat navigasi. Kartu Identitas staf diperluas (Email, Role, Status, Telegram Chat ID, Login Terakhir, Terdaftar)
+- **Superadmin dapat mengubah No HP login sendiri** (`PUT /api/auth/profile` dengan `phone` + `current_password`): validasi format, keunikan, normalisasi canonical, audit `LOGIN_PHONE_CHANGED`. Role lain 403
+- **Seed startup idempoten**: Superadmin hanya dibuat bila belum ada superadmin sama sekali; password/nomor tidak pernah ditimpa dari env. Keeper factory reset mengikuti superadmin aktif
+- **Re-auth tidak lagi auto-logout**: password salah pada `/auth/profile`, `/auth/password`, `/settings/factory-reset` mengembalikan 400 + interceptor axios mem-whitelist endpoint tersebut; sesi kedaluwarsa asli tetap auto-logout
+- Hasil tes: iterasi 5 **77/77**, iterasi 6 **85/85**, iterasi 7 **88/88** backend + frontend 100%
+
 ## Backlog
 - P1: Grafik tren pelunasan & aging overdue; notifikasi in-app
 - P1: Reset password mandiri (OTP/WA) untuk Peminjam

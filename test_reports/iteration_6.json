@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 6: Superadmin phone-change feature validated end-to-end. All 11 new backend tests pass (negative security cases, normalization, audit log, factory-reset keeper follow-current, seed idempotency across restart, RBAC blocking admin/lender, restore). Regression: test_pinjamku_flow.py + test_iter2_features.py + test_iter4_rbac_regress.py — 74 tests all pass (85 total incl. iter6 minus 11 = 74 legacy). Frontend: superadmin sees profile-phone-input, conditional password field appears, empty-password shows toast (no logout), correct-password saves, login with new phone works. Admin does NOT see phone input; no 'Failed to fetch' overlay. Superadmin phone restored to 081200000001 and password intact.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Profile - Superadmin phone change with WRONG current_password", "issue": "Global axios 401 interceptor in /app/frontend/src/lib/api.js clears pk_token and hard-redirects to /login whenever ANY /api call returns 401. When user submits phone change with a wrong current_password, backend correctly returns 401 with detail message, but frontend interceptor logs the user out instead of showing the inline error toast on /profile. UX regression only for this specific self-service flow — the actual client-side empty-password guard works fine (no request sent).", "affected_selectors": ["profile-phone-password-input", "profile-save-btn"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_phone_change.py",
+    "/app/test_reports/pytest/iter6.xml",
+    "/app/test_reports/pytest/iter6_full.xml"
+  ],
+  "action_items": [
+    "Consider making the axios 401 interceptor in /app/frontend/src/lib/api.js skip auto-logout for PUT /auth/profile and PUT /auth/password (re-auth failures), so a wrong current_password on the phone-change form shows a toast without kicking the superadmin out. Alternative: return 400 (not 401) from backend for wrong current_password on those endpoints, since the JWT itself is still valid."
+  ],
+  "critical_code_review_comments": [
+    "auth_routes.update_profile correctly re-auths superadmin, validates format 0xxxxxxxxx, checks uniqueness, and audits both LOGIN_PHONE_CHANGED (with old_value/new_value.phone) and PROFILE_UPDATED.",
+    "server.seed_superadmin is now guarded by 'any superadmin exists' check — no longer overwrites password nor creates a duplicate on restart. Verified across a real supervisorctl restart.",
+    "admin_routes._primary_superadmin falls back to earliest-created superadmin when SUPERADMIN_PHONE no longer matches — factory-reset keeper follows the current admin.",
+    "Profile.jsx conditional password field is guarded by phoneChanged and only rendered for superadmin. Non-superadmin roles never see profile-phone-input."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_phone_change.py"
+  ],
+  "success_rate": {"backend": "100% (11/11 new + 74/74 regression)", "frontend": "100% happy path; 1 UX issue on wrong-password 401 auto-logout"},
+  "test_credentials": "Superadmin 081200000001 / Sup3rAdmin!2026 (RESTORED)",
+  "seed_data_creation": "Ephemeral test admin/lender accounts (081277776666, 081299990099, 081299990002) — all deleted at teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter6_phone_change.py includes a supervisorctl restart of backend and verifies seed idempotency. Superadmin phone is restored to 081200000001 by test_zz_restore_super_phone (sorted-last by name). If interrupted mid-run, ensure users with phone 081288887777/081299990001 are cleaned and superadmin phone matches SUPERADMIN_PHONE in backend/.env.",
+  "rca of the issue": "Frontend wrong-password auto-logout: axios response interceptor treats every 401 as session expiry. On PUT /auth/profile with wrong current_password, backend legitimately returns 401 for the re-auth check, and the interceptor removes pk_token and redirects to /login. Mitigation: relax interceptor for re-auth endpoints OR use HTTP 400 in backend for re-auth failure specifically."
+}

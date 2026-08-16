@@ -681,7 +681,7 @@ async def factory_reset(payload: FactoryResetIn, request: Request, user: dict = 
     if payload.confirmation.strip() != "HAPUS SEMUA DATA":
         raise HTTPException(status_code=400, detail="Ketik persis: HAPUS SEMUA DATA")
     if not verify_password(payload.password, user.get("password_hash", "")):
-        raise HTTPException(status_code=401, detail="Password Superadmin salah")
+        raise HTTPException(status_code=400, detail="Password Superadmin salah")
 
     from pymongo.errors import DuplicateKeyError
     try:

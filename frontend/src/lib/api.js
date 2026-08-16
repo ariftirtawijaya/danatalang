@@ -10,10 +10,16 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Re-authentication endpoints legitimately answer 401 for a wrong current password
+// while the session itself is still valid, so they must not trigger auto-logout.
+const REAUTH_PATHS = ["/auth/profile", "/auth/password", "/settings/factory-reset"];
+
 api.interceptors.response.use(
   (r) => r,
   (error) => {
-    if (error.response?.status === 401 && localStorage.getItem("pk_token")) {
+    const url = error.config?.url || "";
+    const isReauth = REAUTH_PATHS.some((p) => url.startsWith(p));
+    if (error.response?.status === 401 && !isReauth && localStorage.getItem("pk_token")) {
       localStorage.removeItem("pk_token");
       if (!window.location.pathname.startsWith("/login")) window.location.href = "/login";
     }

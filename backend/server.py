@@ -54,30 +54,32 @@ async def seed_superadmin():
     if not phone or not password:
         logger.warning("SUPERADMIN_PHONE/PASSWORD not configured; skipping superadmin seed")
         return
-    from core import normalize_phone, verify_password
+    from core import normalize_phone
 
     phone = normalize_phone(phone)
-    existing = await db.users.find_one({"phone": phone})
-    if not existing:
-        await db.users.insert_one(
-            {
-                "_id": str(uuid.uuid4()),
-                "role": ROLE_SUPERADMIN,
-                "full_name": os.environ.get("SUPERADMIN_NAME", "Super Admin"),
-                "phone": phone,
-                "email": os.environ.get("SUPERADMIN_EMAIL", "superadmin@local.app").lower(),
-                "password_hash": hash_password(password),
-                "is_active": True,
-                "notify_telegram": True,
-                "telegram_chat_id": None,
-                "created_at": iso(now_utc()),
-                "last_login_at": None,
-            }
-        )
-        logger.info("superadmin seeded")
-    elif not verify_password(password, existing.get("password_hash", "")):
-        await db.users.update_one({"_id": existing["_id"]}, {"$set": {"password_hash": hash_password(password)}})
-        logger.info("superadmin password synced from env")
+    any_superadmin = await db.users.find_one({"role": ROLE_SUPERADMIN})
+    if any_superadmin:
+        # Superadmin may have changed its own login phone; never re-seed or overwrite it.
+        return
+    if await db.users.find_one({"phone": phone}):
+        logger.warning("phone %s already used by a non-superadmin account; skipping seed", phone)
+        return
+    await db.users.insert_one(
+        {
+            "_id": str(uuid.uuid4()),
+            "role": ROLE_SUPERADMIN,
+            "full_name": os.environ.get("SUPERADMIN_NAME", "Super Admin"),
+            "phone": phone,
+            "email": os.environ.get("SUPERADMIN_EMAIL", "superadmin@local.app").lower(),
+            "password_hash": hash_password(password),
+            "is_active": True,
+            "notify_telegram": True,
+            "telegram_chat_id": None,
+            "created_at": iso(now_utc()),
+            "last_login_at": None,
+        }
+    )
+    logger.info("superadmin seeded")
 
 
 async def normalize_existing_phones():

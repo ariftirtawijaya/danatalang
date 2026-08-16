@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field, EmailStr, field_validator
 from core import (
     db, now_utc, iso, hash_password, verify_password, create_access_token, normalize_phone,
-    sanitize_user, get_current_user, audit, get_settings, ROLE_BORROWER,
+    sanitize_user, get_current_user, audit, get_settings, ROLE_BORROWER, ROLE_SUPERADMIN,
 )
 from notif import notify_admins, id_datetime
 from loan_service import borrower_credit
@@ -170,6 +170,8 @@ class ProfileIn(BaseModel):
     account_number: str | None = None
     account_holder: str | None = None
     telegram_chat_id: str | None = None
+    phone: str | None = None
+    current_password: str | None = None
 
 
 @router.put("/profile")
@@ -187,11 +189,29 @@ async def update_profile(payload: ProfileIn, request: Request, user: dict = Depe
         v = getattr(payload, f)
         if v is not None:
             updates[f] = v.strip()
+    if payload.phone is not None:
+        new_phone = normalize_phone(payload.phone)
+        if new_phone != user.get("phone"):
+            if user["role"] != ROLE_SUPERADMIN:
+                raise HTTPException(status_code=403, detail="Nomor HP hanya dapat diubah oleh Superadmin atau melalui Admin")
+            if not re.fullmatch(r"0\d{8,14}", new_phone):
+                raise HTTPException(status_code=400, detail="Nomor HP tidak valid")
+            if not payload.current_password or not verify_password(payload.current_password, user.get("password_hash", "")):
+                raise HTTPException(status_code=400, detail="Password Anda saat ini salah. Masukkan password yang benar untuk mengubah Nomor HP.")
+            if await db.users.find_one({"phone": new_phone, "_id": {"$ne": user["_id"]}}):
+                raise HTTPException(status_code=400, detail="Nomor HP sudah digunakan akun lain")
+            updates["phone"] = new_phone
     if payload.bank_name and user["role"] == ROLE_BORROWER and payload.bank_name not in BANK_TYPES:
         raise HTTPException(status_code=400, detail="Jenis rekening tidak valid")
     if not updates:
         return sanitize_user(user)
     await db.users.update_one({"_id": user["_id"]}, {"$set": updates})
+    if "phone" in updates:
+        await audit(
+            request, user, "LOGIN_PHONE_CHANGED", "user", str(user["_id"]),
+            f"Nomor HP login diubah dari {user.get('phone')} menjadi {updates['phone']}",
+            {"phone": user.get("phone")}, {"phone": updates["phone"]},
+        )
     await audit(request, user, "PROFILE_UPDATED", "user", str(user["_id"]), "Profil diperbarui", None, updates)
     fresh = await db.users.find_one({"_id": user["_id"]})
     return sanitize_user(fresh)

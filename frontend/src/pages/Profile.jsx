@@ -17,12 +17,16 @@ export default function Profile() {
     account_number: user?.account_number || "",
     account_holder: user?.account_holder || "",
     telegram_chat_id: user?.telegram_chat_id || "",
+    phone: user?.phone || "",
+    current_password: "",
   });
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
   const [saving, setSaving] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const isLender = user?.role === "lender";
   const isBorrower = user?.role === "borrower";
+  const isSuper = user?.role === "superadmin";
+  const phoneChanged = isSuper && form.phone && form.phone !== user?.phone;
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -37,9 +41,19 @@ export default function Profile() {
         payload.account_holder = form.account_holder;
       }
       if (!isBorrower) payload.telegram_chat_id = form.telegram_chat_id;
+      if (phoneChanged) {
+        if (!form.current_password) {
+          toast.error("Masukkan password Anda saat ini untuk mengubah Nomor HP");
+          setSaving(false);
+          return;
+        }
+        payload.phone = form.phone;
+        payload.current_password = form.current_password;
+      }
       await api.put("/auth/profile", payload);
+      setForm((f) => ({ ...f, current_password: "" }));
       await refresh();
-      toast.success("Profil diperbarui");
+      toast.success(phoneChanged ? "Profil & Nomor HP login diperbarui" : "Profil diperbarui");
     } catch (err) {
       toast.error(errMsg(err));
     } finally {
@@ -118,6 +132,39 @@ export default function Profile() {
                   <Label>Nama Pemilik Rekening</Label>
                   <Input data-testid="profile-holder-input" value={form.account_holder} onChange={set("account_holder")} className="h-11 rounded-xl" />
                 </div>
+              </>
+            )}
+            {isSuper && (
+              <>
+                <div className="space-y-2">
+                  <Label>Nomor HP (dipakai untuk login)</Label>
+                  <Input
+                    data-testid="profile-phone-input"
+                    inputMode="numeric"
+                    value={form.phone}
+                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value.replace(/\D/g, "") }))}
+                    className="h-11 rounded-xl num"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Mengubah nomor ini mengubah identitas login Anda. Gunakan nomor yang aktif dan mudah Anda ingat.
+                  </p>
+                </div>
+                {phoneChanged && (
+                  <div className="space-y-2 rounded-xl border border-amber-300/60 bg-amber-50 p-4 dark:bg-amber-500/10">
+                    <Label>Password Saat Ini (wajib untuk mengubah Nomor HP)</Label>
+                    <Input
+                      data-testid="profile-phone-password-input"
+                      type="password"
+                      value={form.current_password}
+                      onChange={(e) => setForm((f) => ({ ...f, current_password: e.target.value }))}
+                      className="h-11 rounded-xl"
+                      autoComplete="current-password"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Setelah disimpan, login berikutnya memakai nomor {form.phone}.
+                    </p>
+                  </div>
+                )}
               </>
             )}
             {!isBorrower && (
