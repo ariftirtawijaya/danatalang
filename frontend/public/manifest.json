@@ -1,0 +1,17 @@
+{
+  "short_name": "PinjamKu",
+  "name": "PinjamKu — Manajemen Pinjaman",
+  "description": "Sistem manajemen pinjaman uang end-to-end",
+  "icons": [
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" }
+  ],
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#114232",
+  "background_color": "#F8FAFC",
+  "lang": "id"
+}

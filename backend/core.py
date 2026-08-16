@@ -1,0 +1,201 @@
+import os
+import jwt
+import bcrypt
+import logging
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from typing import Optional
+from fastapi import HTTPException, Request, Depends
+from motor.motor_asyncio import AsyncIOMotorClient
+
+logger = logging.getLogger("app")
+
+ROOT_DIR = Path(__file__).parent
+
+client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+db = client[os.environ["DB_NAME"]]
+
+JWT_ALGORITHM = "HS256"
+ACCESS_TTL_MINUTES = 60 * 12
+
+ROLE_SUPERADMIN = "superadmin"
+ROLE_ADMIN = "admin"
+ROLE_LENDER = "lender"
+ROLE_BORROWER = "borrower"
+
+DEFAULT_SETTINGS = {
+    "_id": "app",
+    "app_name": "PinjamKu",
+    "app_description": "Sistem Manajemen Pinjaman",
+    "logo_url": None,
+    "favicon_url": None,
+    "interest_rate": 10.0,
+    "late_fee_rate_per_day": 1.0,
+    "telegram_reg_enabled": False,
+    "telegram_reg_token": None,
+    "telegram_loan_enabled": False,
+    "telegram_loan_token": None,
+}
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso(dt: Optional[datetime]) -> Optional[str]:
+    return dt.isoformat() if dt else None
+
+
+def parse_dt(value) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def jwt_secret() -> str:
+    return os.environ["JWT_SECRET"]
+
+
+def create_access_token(user_id: str, role: str) -> str:
+    payload = {
+        "sub": user_id,
+        "role": role,
+        "type": "access",
+        "exp": now_utc() + timedelta(minutes=ACCESS_TTL_MINUTES),
+    }
+    return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def normalize_phone(phone: str) -> str:
+    p = "".join(ch for ch in (phone or "") if ch.isdigit() or ch == "+")
+    if p.startswith("+62"):
+        p = "0" + p[3:]
+    elif p.startswith("62") and not p.startswith("620"):
+        p = "0" + p[2:]
+    return p
+
+
+async def get_settings() -> dict:
+    doc = await db.settings.find_one({"_id": "app"})
+    if not doc:
+        await db.settings.insert_one(dict(DEFAULT_SETTINGS))
+        return dict(DEFAULT_SETTINGS)
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(doc)
+    return merged
+
+
+def public_settings(s: dict) -> dict:
+    return {
+        "app_name": s.get("app_name"),
+        "app_description": s.get("app_description"),
+        "logo_url": s.get("logo_url"),
+        "favicon_url": s.get("favicon_url"),
+        "interest_rate": s.get("interest_rate"),
+        "late_fee_rate_per_day": s.get("late_fee_rate_per_day"),
+    }
+
+
+def sanitize_user(u: dict) -> dict:
+    out = {k: v for k, v in (u or {}).items() if k not in ("password_hash", "_id")}
+    out["id"] = str(u.get("_id") or u.get("id"))
+    return out
+
+
+async def _token_user(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Sesi telah berakhir, silakan login kembali")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+    user = await db.users.find_one({"_id": payload["sub"]})
+    if not user:
+        raise HTTPException(status_code=401, detail="User tidak ditemukan")
+    if user.get("is_active") is False:
+        raise HTTPException(status_code=403, detail="Akun Anda dinonaktifkan")
+    return user
+
+
+async def get_current_user(request: Request) -> dict:
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else request.query_params.get("auth")
+    if not token:
+        raise HTTPException(status_code=401, detail="Belum terautentikasi")
+    return await _token_user(token)
+
+
+def require_roles(*roles):
+    async def dep(user: dict = Depends(get_current_user)) -> dict:
+        if user.get("role") not in roles:
+            raise HTTPException(status_code=403, detail="Anda tidak memiliki akses untuk aksi ini")
+        return user
+
+    return dep
+
+
+require_staff = require_roles(ROLE_SUPERADMIN, ROLE_ADMIN)
+require_superadmin = require_roles(ROLE_SUPERADMIN)
+require_lender = require_roles(ROLE_LENDER)
+require_borrower = require_roles(ROLE_BORROWER)
+
+
+async def audit(
+    request: Optional[Request],
+    user: Optional[dict],
+    action: str,
+    entity_type: str,
+    entity_id: Optional[str],
+    description: str = "",
+    old_value=None,
+    new_value=None,
+):
+    import uuid
+
+    doc = {
+        "_id": str(uuid.uuid4()),
+        "user_id": str(user.get("_id")) if user else None,
+        "user_name": (user or {}).get("full_name"),
+        "role": (user or {}).get("role"),
+        "action": action,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "old_value": old_value,
+        "new_value": new_value,
+        "description": description,
+        "ip_address": (request.client.host if request and request.client else None),
+        "user_agent": (request.headers.get("user-agent") if request else None),
+        "created_at": iso(now_utc()),
+    }
+    await db.audit_logs.insert_one(doc)
+
+
+async def ensure_indexes():
+    await db.users.create_index("phone", unique=True)
+    await db.users.create_index("email", unique=True, sparse=True)
+    await db.users.create_index("nik", unique=True, sparse=True)
+    await db.users.create_index("role")
+    await db.loans.create_index("loan_number", unique=True)
+    await db.loans.create_index("borrower_id")
+    await db.loans.create_index("funded_by")
+    await db.loans.create_index("status")
+    await db.payments.create_index("loan_id")
+    await db.audit_logs.create_index("created_at")
+    await db.login_attempts.create_index("identifier")
+    await db.notifications.create_index("created_at")

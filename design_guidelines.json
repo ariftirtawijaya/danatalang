@@ -1,0 +1,112 @@
+{
+  "theme": "light_dark_toggle",
+  "typography": {
+    "headings": {
+      "font_family": "Outfit, sans-serif",
+      "weights": ["500", "600", "700"],
+      "usage": "Use tight letter spacing (tracking-tight) for large headers. Do NOT use Inter, Roboto, or generic sans for headings. Max size text-5xl on desktop."
+    },
+    "body": {
+      "font_family": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500", "600"],
+      "usage": "Use leading-relaxed for long text, clean legible sizes. Left align for better readability."
+    },
+    "instructions": "Import 'Outfit' and 'IBM Plex Sans' from Google Fonts in index.css."
+  },
+  "colors": {
+    "archetype": "Organic & Earthy (Trust, Finance)",
+    "primary": "#114232",
+    "primary_foreground": "#F7F9F2",
+    "secondary": "#87A922",
+    "background_light": "#F8FAFC",
+    "surface_light": "#FFFFFF",
+    "background_dark": "#0B1110",
+    "surface_dark": "#131C1A",
+    "status": {
+      "pending": "#F59E0B",
+      "active": "#3B82F6",
+      "success": "#10B981",
+      "warning": "#F97316",
+      "rejected": "#EF4444"
+    },
+    "rules": [
+      "Use primary sparingly, only for key actions and active states.",
+      "Ensure tinting of grays (Slate or Zinc) to avoid pure #808080 or #000000.",
+      "Hover state color must explicitly set text color (e.g., hover:bg-primary/90 hover:text-white)."
+    ]
+  },
+  "visual_enhancers": {
+    "borders": "1px solid border-border (with 10% opacity on cards).",
+    "shadows": "Soft diffuse ambient shadows: shadow-[0_8px_30px_rgb(0,0,0,0.04)]. Avoid harsh generic shadows.",
+    "radius": "rounded-2xl for main cards, rounded-full for primary action buttons.",
+    "glassmorphism": "Use backdrop-blur-xl bg-white/70 (light) or bg-black/60 (dark) for sticky headers and mobile bottom navs. Mandatory 1px inner stroke.",
+    "surfaces": "Dashboard widgets should use 'Clay & Crisp' neumorphism or flat solid surfaces with sharp inner contrasts."
+  },
+  "components": {
+    "libraries": [
+      "shadcn/ui",
+      "framer-motion",
+      "lucide-react",
+      "@phosphor-icons/react",
+      "sonner",
+      "recharts"
+    ],
+    "guidelines": {
+      "buttons": "Pill-shaped (rounded-full). Distinct hover states with subtle lift (-translate-y-0.5).",
+      "cards": "Go flat, rectangular or slightly rounded, dense styles. Avoid generic card overload. Use generous internal padding (p-6 or p-8).",
+      "bottom_nav": "Fixed bottom for mobile (Peminjam & Pendana) using glassmorphism. Use Phosphor icons (Duotone).",
+      "dialogs": "Use Shadcn Dialog for all financial actions (Funding claim, Transfer, Repayment). Clean typography, bold action buttons.",
+      "badges": "Soft colored backgrounds with bold dark text. rounded-md, text-xs, uppercase, wide tracking (tracking-widest).",
+      "inputs": "Use Shadcn Form/Input. Never use native raw inputs."
+    }
+  },
+  "grids_and_layouts": {
+    "dashboard_superadmin": "High density grid. grid-cols-1 md:grid-cols-3 lg:grid-cols-4 with gap-4 or gap-6. Span summary cards 1 col, charts 2 or 3 cols. No jagged bottoms (use h-full).",
+    "mobile_first_views": "Single column grid. Edge-to-edge or subtly padded containers. Bottom padding pb-24 required to account for bottom nav.",
+    "tables": "Edge-to-edge on mobile. Left-align text, right-align monetary values (IDR).",
+    "spacing": "Generous Spacing Philosophy. Use 2-3x more spacing. Containers with borders MUST have internal padding."
+  },
+  "motion": {
+    "page_transitions": "Fade in with slight upward motion using framer-motion.",
+    "interactions": "Buttons scale down slightly on active (scale-[0.98]).",
+    "lists": "Staggered entrance animations for loan lists/history."
+  },
+  "accessibility": {
+    "contrast": "Minimum 4.5:1 contrast ratio for normal text.",
+    "testing": "All interactive elements MUST include data-testid attribute (e.g., data-testid='submit-loan-btn').",
+    "motion": "Respect prefers-reduced-motion."
+  },
+  "media": {
+    "image_urls": {
+      "login_background": {
+        "url": "https://images.unsplash.com/photo-1498262257252-c282316270bc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGFyY2hpdGVjdHVyZSUyMG1pbmltYWx8ZW58MHx8fHwxNzg2ODUyNDk1fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract architecture minimal grey digital wallpaper for login split screen side panel",
+        "category": "auth_background"
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build an end-to-end PWA money lending application (SaaS + Mobile-first) with 4 roles: Superadmin, Admin, Peminjam, Pendana.",
+    "Implement full flow: Registration -> Verification -> Limit Set -> Loan Request -> Funder Take -> Transfer -> Confirm -> Repay -> Lunas.",
+    "Use Rupiah (Rp) formatting for all currencies. Ensure Indonesian context.",
+    "Mobile-first design for Borrower and Funder interfaces, featuring a sticky Bottom Navigation bar.",
+    "Superadmin dashboard needs 14 summary cards and useful Recharts graphs.",
+    "Admin dashboard focuses on 'Action Required' tasks.",
+    "Provide clear Empty States, Loading Skeletons, and Confirmation Dialogs for critical financial actions.",
+    "Use Phosphor Icons (yarn add @phosphor-icons/react).",
+    "Integrate Shadcn UI components extensively (Tables, Tabs, Dialogs, Forms) but customize them to remove the generic look.",
+    "Use Sonner for toast notifications.",
+    "Login is strictly 'No HP + Password'.",
+    "Implement Audit Log and Settings (General/Loan/Telegram) for Superadmin."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "You tend to converge toward generic, 'on distribution' outputs. Make creative, distinctive frontends that surprise and delight.",
+    "Do NOT use complete transparent backgrounds in headers, overlays, or any surface that has content under it (e.g., Dropdowns).",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Never apply universal transition (transition: all). Use specific transitions (e.g., transition-colors, transition-transform).",
+    "Never center align the app container. No .App { text-align: center; }.",
+    "Never use AI assistant Emoji characters (🤖🧠💭💡) for icons.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "All interactive and key informational elements MUST include a data-testid attribute."
+  ]
+}

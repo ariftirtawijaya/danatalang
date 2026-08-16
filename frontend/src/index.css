@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 210 40% 98%;
+        --foreground: 170 25% 10%;
+        --card: 0 0% 100%;
+        --card-foreground: 170 25% 10%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 170 25% 10%;
+        --primary: 160 59% 16%;
+        --primary-foreground: 80 30% 97%;
+        --secondary: 160 12% 94%;
+        --secondary-foreground: 160 40% 14%;
+        --muted: 160 10% 95%;
+        --muted-foreground: 175 8% 42%;
+        --accent: 75 66% 40%;
+        --accent-foreground: 160 59% 12%;
+        --destructive: 0 74% 52%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 160 12% 88%;
+        --input: 160 12% 88%;
+        --ring: 160 59% 16%;
+        --chart-1: 160 59% 26%;
+        --chart-2: 75 66% 40%;
+        --chart-3: 199 89% 48%;
+        --chart-4: 38 92% 50%;
+        --chart-5: 0 74% 52%;
+        --radius: 0.875rem;
+    }
+    .dark {
+        --background: 168 18% 6%;
+        --foreground: 80 20% 96%;
+        --card: 170 17% 9%;
+        --card-foreground: 80 20% 96%;
+        --popover: 170 17% 10%;
+        --popover-foreground: 80 20% 96%;
+        --primary: 75 66% 45%;
+        --primary-foreground: 160 59% 10%;
+        --secondary: 170 12% 16%;
+        --secondary-foreground: 80 20% 96%;
+        --muted: 170 12% 15%;
+        --muted-foreground: 165 8% 62%;
+        --accent: 75 66% 45%;
+        --accent-foreground: 160 59% 10%;
+        --destructive: 0 70% 50%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 170 10% 20%;
+        --input: 170 10% 20%;
+        --ring: 75 66% 45%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    html {
+        -webkit-tap-highlight-color: transparent;
+    }
+    body {
+        @apply bg-background text-foreground;
+        margin: 0;
+        font-family: "IBM Plex Sans", ui-sans-serif, sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, h4, .font-heading {
+        font-family: "Outfit", ui-sans-serif, sans-serif;
+        letter-spacing: -0.02em;
+    }
+    ::selection {
+        background: hsl(75 66% 40% / 0.3);
+    }
+}
+
+@layer utilities {
+    .glass {
+        background: hsl(0 0% 100% / 0.78);
+        backdrop-filter: blur(20px);
+        box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.6);
+    }
+    .dark .glass {
+        background: hsl(170 17% 9% / 0.8);
+        box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.06);
+    }
+    .card-soft {
+        box-shadow: 0 8px 30px rgb(4 30 20 / 0.05);
+    }
+    .num {
+        font-variant-numeric: tabular-nums;
+    }
+    .animate-rise {
+        animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+}
+
+@keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .animate-rise { animation: none; }
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+}
