@@ -1,4 +1,5 @@
 import io
+import os
 import csv
 import uuid
 import asyncio
@@ -8,11 +9,11 @@ from fastapi import APIRouter, HTTPException, Request, Depends, UploadFile, File
 from pydantic import BaseModel, Field, EmailStr
 from core import (
     db, now_utc, iso, parse_dt, audit, get_settings, public_settings, get_current_user, require_staff,
-    require_superadmin, sanitize_user, hash_password, normalize_phone, generate_temp_password,
-    ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_LENDER, ROLE_BORROWER,
+    require_superadmin, sanitize_user, hash_password, verify_password, normalize_phone,
+    generate_temp_password, DEFAULT_SETTINGS, ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_LENDER, ROLE_BORROWER,
 )
 from notif import _send_sync, rp
-from storage import save_upload
+from storage import save_upload, list_objects, purge_prefix
 import loan_service as LS
 
 router = APIRouter(prefix="/api", tags=["management"])
@@ -624,6 +625,116 @@ async def test_telegram(payload: TestTelegramIn, user: dict = Depends(require_su
 
 
 # ---------------- audit & notifications ----------------
+WIPE_COLLECTIONS = [
+    "loans", "loan_status_histories", "disbursements", "payments", "notifications",
+    "admin_notes", "audit_logs", "files", "counters", "login_attempts",
+]
+
+
+async def _primary_superadmin() -> dict:
+    phone = normalize_phone(os.environ.get("SUPERADMIN_PHONE", ""))
+    keeper = await db.users.find_one({"phone": phone, "role": ROLE_SUPERADMIN}) if phone else None
+    if not keeper:
+        keeper = await db.users.find_one({"role": ROLE_SUPERADMIN}, sort=[("created_at", 1)])
+    if not keeper:
+        raise HTTPException(status_code=500, detail="Akun Superadmin utama tidak ditemukan")
+    return keeper
+
+
+@router.get("/settings/factory-reset/preview")
+async def factory_reset_preview(user: dict = Depends(require_superadmin)):
+    keeper = await _primary_superadmin()
+    counts = {
+        "admins": await db.users.count_documents({"role": ROLE_ADMIN}),
+        "lenders": await db.users.count_documents({"role": ROLE_LENDER}),
+        "borrowers": await db.users.count_documents({"role": ROLE_BORROWER}),
+        "other_superadmins": await db.users.count_documents({"role": ROLE_SUPERADMIN, "_id": {"$ne": keeper["_id"]}}),
+        "loans": await db.loans.count_documents({}),
+        "disbursements": await db.disbursements.count_documents({}),
+        "payments": await db.payments.count_documents({}),
+        "loan_status_histories": await db.loan_status_histories.count_documents({}),
+        "notifications": await db.notifications.count_documents({}),
+        "admin_notes": await db.admin_notes.count_documents({}),
+        "audit_logs": await db.audit_logs.count_documents({}),
+        "files": await db.files.count_documents({}),
+        "counters": await db.counters.count_documents({}),
+    }
+    try:
+        objects = await asyncio.to_thread(list_objects, "pinjamku/")
+        counts["storage_objects"] = len(objects)
+        counts["storage_bytes"] = sum(o.get("size", 0) for o in objects)
+    except Exception:
+        counts["storage_objects"] = None
+        counts["storage_bytes"] = None
+    counts["total_records"] = sum(v for k, v in counts.items() if isinstance(v, int) and k != "storage_bytes")
+    counts["keeper"] = {"full_name": keeper.get("full_name"), "phone": keeper.get("phone")}
+    return counts
+
+
+class FactoryResetIn(BaseModel):
+    confirmation: str
+    password: str
+
+
+@router.post("/settings/factory-reset")
+async def factory_reset(payload: FactoryResetIn, request: Request, user: dict = Depends(require_superadmin)):
+    if payload.confirmation.strip() != "HAPUS SEMUA DATA":
+        raise HTTPException(status_code=400, detail="Ketik persis: HAPUS SEMUA DATA")
+    if not verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Password Superadmin salah")
+
+    from pymongo.errors import DuplicateKeyError
+    try:
+        lock = await db.system_locks.find_one_and_update(
+            {"_id": "factory_reset", "running": {"$ne": True}},
+            {"$set": {"running": True, "started_at": iso(now_utc()), "by": str(user["_id"])}},
+            upsert=True,
+            return_document=True,
+        )
+    except DuplicateKeyError:
+        # Another concurrent request already acquired the lock.
+        raise HTTPException(status_code=409, detail="Factory reset sedang berjalan")
+    if not lock or lock.get("by") != str(user["_id"]):
+        raise HTTPException(status_code=409, detail="Factory reset sedang berjalan")
+
+    keeper = await _primary_superadmin()
+    before = await factory_reset_preview(user)
+    storage_result = {"purged": 0, "failed": 0, "remaining_bytes": 0}
+    success = False
+    try:
+        try:
+            storage_result = await asyncio.to_thread(purge_prefix, "pinjamku/")
+        except Exception as e:
+            storage_result = {"purged": 0, "failed": -1, "error": str(e)}
+        for name in set(WIPE_COLLECTIONS):
+            await db[name].delete_many({})
+        await db.users.delete_many({"_id": {"$ne": keeper["_id"]}})
+        await db.settings.delete_many({})
+        await db.settings.insert_one(dict(DEFAULT_SETTINGS))
+        await db.users.update_one({"_id": keeper["_id"]}, {"$unset": {"must_change_password": ""}})
+        success = storage_result.get("failed", 0) <= 0 and (storage_result.get("remaining_bytes") or 0) == 0
+        await audit(
+            request, keeper, "SYSTEM_FACTORY_RESET", "system", "app",
+            f"Factory reset dijalankan oleh {keeper.get('full_name')}. Status: {'BERHASIL' if success else 'SELESAI DENGAN PERINGATAN'}. "
+            f"Objek storage dihapus: {storage_result.get('purged')}, gagal: {storage_result.get('failed')}.",
+            {"deleted": {k: v for k, v in before.items() if isinstance(v, int)}},
+            {"status": "SUCCESS" if success else "PARTIAL", "storage": storage_result, "kept_superadmin": keeper.get("phone")},
+        )
+    finally:
+        await db.system_locks.update_one(
+            {"_id": "factory_reset"}, {"$set": {"running": False, "finished_at": iso(now_utc())}}
+        )
+
+    return {
+        "ok": True,
+        "status": "SUCCESS" if success else "PARTIAL",
+        "deleted": {k: v for k, v in before.items() if isinstance(v, int)},
+        "storage": storage_result,
+        "kept_superadmin": {"full_name": keeper.get("full_name"), "phone": keeper.get("phone")},
+        "settings": public_settings(await get_settings()),
+    }
+
+
 @router.get("/audit-logs")
 async def audit_logs(
     user: dict = Depends(require_superadmin),

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, errMsg } from "@/lib/api";
 import { useSettings } from "@/context/SettingsContext";
+import { useAuth } from "@/context/AuthContext";
 import { PageHeader, LoadingRows, EmptyState } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,10 +12,13 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
+import DangerZone from "@/pages/staff/DangerZone";
 import { AlertTriangle } from "lucide-react";
 
 export default function Settings() {
   const { reload } = useSettings();
+  const { user } = useAuth();
+  const isSuper = user?.role === "superadmin";
   const [busy, setBusy] = useState(null);
   const { data, isLoading, refetch } = useQuery({ queryKey: ["settings"], queryFn: async () => (await api.get("/settings")).data });
   const { data: notif } = useQuery({ queryKey: ["notif-log"], queryFn: async () => (await api.get("/notifications", { params: { page_size: 20 } })).data });
@@ -62,6 +66,7 @@ export default function Settings() {
           <TabsTrigger value="umum" data-testid="settings-tab-general">Umum</TabsTrigger>
           <TabsTrigger value="pinjaman" data-testid="settings-tab-loan">Pinjaman</TabsTrigger>
           <TabsTrigger value="telegram" data-testid="settings-tab-telegram">Telegram</TabsTrigger>
+          {isSuper && <TabsTrigger value="sistem" data-testid="settings-tab-system">Sistem</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="umum">
@@ -217,6 +222,10 @@ export default function Settings() {
               <EmptyState testId="empty-notif-log" title="Belum ada notifikasi terkirim" />
             )}
           </section>
+        </TabsContent>
+
+        <TabsContent value="sistem">
+          {isSuper && <DangerZone />}
         </TabsContent>
       </Tabs>
     </div>

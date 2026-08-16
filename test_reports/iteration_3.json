@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 3 (Factory Reset / Clean Install) fully tested end-to-end. Backend: 42/42 new iter3 tests + 70/70 regression = 112/112 PASSING on public URL. Ordered Phase A→G (RBAC & validation without deleting → seed full data → mutate settings → real reset → verify clean → rebuild to PAID → double-submit robustness). Discovered and fixed a 500 on concurrent factory-reset (MongoDB DuplicateKeyError on upsert-lock). Frontend Danger Zone UI (preview table, dialog, disabled/enabled submit, actual reset) works end-to-end and app_name/settings return to PinjamKu defaults after the UI-driven reset (verified via API: all counters 0, storage_bytes=0, settings default). One frontend RBAC gating gap identified: admin (non-superadmin) can still navigate to /settings directly and see the Sistem tab (backend correctly returns 403 so no data leak, but requirement explicitly states admin should not see Pengaturan menu / Sistem tab).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/settings/factory-reset", "issue": "Original impl returned 500 on the second of two concurrent requests (pymongo DuplicateKeyError from upsert when filter {running: {$ne: true}} no longer matches). FIXED by catching DuplicateKeyError → 409 in /app/backend/admin_routes.py."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings page / DangerZone", "issue": "Admin (non-superadmin) can navigate directly to /settings and sees all four tabs including 'Sistem'. Backend correctly denies the preview/settings endpoints with 403 so no data leaks, but requirement states 'Admin (non-superadmin) tidak boleh melihat menu Pengaturan/tab Sistem'. Sidebar hides the Pengaturan link correctly, but the route itself is not role-guarded and the Sistem tab is visible.", "selector": "[data-testid=\"settings-tab-system\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter3_factory_reset.py",
+    "/app/backend/tests/test_pinjamku_flow.py",
+    "/app/backend/tests/test_iter2_features.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "(Frontend) Role-guard the /settings route (or at minimum hide the 'Sistem' TabsTrigger) when user.role !== 'superadmin'. Requirement: admin must not see the Pengaturan menu / Sistem tab at all."
+  ],
+  "critical_code_review_comments": [
+    "admin_routes.WIPE_COLLECTIONS lists 'admin_notes' twice (once explicitly, once at end). Harmless because of `set(...)` in the wipe loop, but should be dedup'd.",
+    "factory_reset lock: fixed the DuplicateKeyError→500 race. Consider also releasing the lock in the DuplicateKeyError path is not needed (we never acquired it) — current code is correct. The `try/finally` still releases correctly for the winning request.",
+    "factory_reset audit_log entry stores full 'deleted' counts inside old_value and status/storage inside new_value — good forensic trail; user_name and created_at are set via `audit()` (uses `keeper` as executor even if a different superadmin invoked the reset — this is the intended behaviour per _primary_superadmin design, but worth documenting).",
+    "_primary_superadmin falls back to earliest-created superadmin if SUPERADMIN_PHONE not set — resilient.",
+    "storage.purge_prefix correctly verifies remaining_bytes==0 after overwrite (physical destruction since API has no DELETE). Confirmed after reset: storage_objects still listed (66) but storage_bytes=0 — matches spec. Frontend copy 'dihapus fisik' matches this behaviour.",
+    "DangerZone.jsx frontend gating: canSubmit requires confirmation === 'HAPUS SEMUA DATA' && password.length >= 6 — matches spec exactly; submit button correctly disabled otherwise (verified via UI).",
+    "Frontend RBAC miss: Settings page/route not role-gated (see ui_bugs). ProtectedRoute in routes probably allows both admin & superadmin — should be tightened for /settings specifically."
+  ],
+  "updated_files": [
+    "/app/backend/admin_routes.py",
+    "/app/backend/tests/test_iter3_factory_reset.py"
+  ],
+  "success_rate": {"backend": "100% (112/112 — 70 regression + 42 new iter3)", "frontend": "95% (Danger Zone flow fully works; one RBAC gap on /settings route visibility for admin)"},
+  "test_credentials": "Superadmin 081200000001 / Sup3rAdmin!2026. All other accounts created per-test.",
+  "seed_data_creation": "Each iter3 run seeds: 1 pre-reset admin+lender+borrower for RBAC-403 tests (TEST A prefix), then a full dataset (admin, lender1, lender2, verified borrower, 1 PAID loan, 1 ACTIVE loan with dual proof files) prefixed 'TEST B'. Also mutates settings (MUTATED APP / 12% / 1.5% / dummy Telegram tokens) then wipes everything with real factory reset. After reset rebuilds 'TEST F' users + a PAID loan (verifies counter reset via PIN-0001).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_iter3_factory_reset.py must run with `-n 0` (like the other suites) because it shares module STATE and executes an irreversible factory reset in the middle. Ordering (Phase A→G) is deliberate — do not reorder classes. After iter3 the DB is left with only the superadmin + 1 rebuilt PAID loan/admin/lender/borrower (TEST F). If re-running the older suites afterwards is desired, run legacy suites BEFORE iter3, or accept that iter3 wipes and rebuilds. Regression check performed twice: once before iter3 (baseline), once after (still 70/70).",
+  "rca of the issue": "Concurrent factory-reset 500 → RCA: `db.system_locks.find_one_and_update({_id:'factory_reset', running:{$ne:true}}, {$set:{running:true,...}}, upsert=True)`. On the second concurrent request, the filter no longer matches (running is now true), so Mongo attempts an insert with _id='factory_reset' which conflicts with the existing document → DuplicateKeyError → FastAPI 500. FIX: wrap the find_one_and_update in try/except DuplicateKeyError and raise HTTPException(409). Verified via TestG_DoubleSubmit.test_two_parallel_resets_no_500 (two threads, both return 200/409 idempotently, no 5xx, superadmin & default settings preserved)."
+}

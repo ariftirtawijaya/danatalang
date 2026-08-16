@@ -41,6 +41,14 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - **Reset password**: `POST /api/users/{id}/reset-password` menghasilkan temporary password sistem + `must_change_password=true` (Admin hanya boleh reset Peminjam, tidak boleh reset diri sendiri). Semua endpoint lain diblokir 403 sampai user membuat password baru di halaman wajib ganti password
 - Regresi + fitur baru: **70/70 tes backend lolos**; 4 flow UI baru terverifikasi
 
+## Iterasi 3–4 (16 Agustus 2026) — Factory Reset / Clean Install
+- **Pengaturan → Sistem → Danger Zone** (Superadmin saja): `GET /api/settings/factory-reset/preview` menampilkan jumlah per kategori + jumlah/ukuran file object storage; `POST /api/settings/factory-reset` menghapus seluruh users (kecuali Superadmin utama dari `SUPERADMIN_PHONE`), loans, disbursements, payments & semua attempt, loan_status_histories, notifications, admin_notes, audit_logs lama, files, counters/sequence, login_attempts, lalu mereset settings/bunga/denda/Telegram/branding ke `DEFAULT_SETTINGS`
+- **File bukti dihapus fisik**: object storage Emergent tidak menyediakan verb DELETE (405), sehingga byte tiap objek dihancurkan via overwrite 0 byte (`purge_prefix`, diverifikasi `remaining_bytes == 0`) sebelum referensi DB dihapus
+- Pengaman: hanya Superadmin, preview jumlah data, warning irreversible, wajib ketik persis `HAPUS SEMUA DATA`, re-auth password Superadmin, tombol destructive, lock `db.system_locks` anti double-submit (request kedua → 409, bukan 500)
+- Audit log baru `SYSTEM_FACTORY_RESET` mencatat pelaksana, timestamp, jumlah data terhapus, hasil purge storage, dan status keberhasilan
+- Route `/settings` & `/audit-logs` di frontend di-role-guard superadmin (Admin dialihkan ke dashboard, tab Sistem tidak dirender)
+- Hasil tes: **112/112 backend (iterasi 3)** dan **77/77 (iterasi 4: 70 regresi + 7 RBAC)**, frontend Danger Zone 100%
+
 ## Backlog
 - P1: Grafik tren pelunasan & aging overdue; notifikasi in-app
 - P1: Reset password mandiri (OTP/WA) untuk Peminjam

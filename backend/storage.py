@@ -59,6 +59,53 @@ def get_object(path: str):
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
 
 
+def list_objects(prefix: str) -> list:
+    key = init_storage()
+    resp = requests.get(f"{STORAGE_URL}/objects", headers={"X-Storage-Key": key}, params={"prefix": prefix}, timeout=60)
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = requests.get(f"{STORAGE_URL}/objects", headers={"X-Storage-Key": key}, params={"prefix": prefix}, timeout=60)
+    resp.raise_for_status()
+    return resp.json().get("objects", [])
+
+
+def purge_object(path: str) -> bool:
+    """The storage API exposes no DELETE verb, so the object's bytes are physically
+    destroyed by overwriting it with an empty payload (verified size == 0)."""
+    key = init_storage()
+    resp = requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": "application/octet-stream"},
+        data=b"",
+        timeout=60,
+    )
+    if resp.status_code == 404:
+        key = init_storage(force=True)
+        resp = requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": "application/octet-stream"},
+            data=b"",
+            timeout=60,
+        )
+    resp.raise_for_status()
+    return resp.json().get("size", -1) == 0
+
+
+def purge_prefix(prefix: str = f"{APP_PREFIX}/") -> dict:
+    """Purge every object under a prefix. Returns {purged, failed, remaining_bytes}."""
+    purged, failed = 0, 0
+    for obj in list_objects(prefix):
+        try:
+            if purge_object(obj["path"]):
+                purged += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+    remaining = sum(o.get("size", 0) for o in list_objects(prefix))
+    return {"purged": purged, "failed": failed, "remaining_bytes": remaining}
+
+
 async def save_upload(db, file: UploadFile, user_id: str, kind: str) -> dict:
     content_type = (file.content_type or "").lower()
     if content_type not in ALLOWED_MIME:
