@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 5 verified the fix for the 'Failed to fetch' error overlay on /profile for Superadmin, plus the expanded Identitas card and unchanged flows. Backend regression 77/77 PASSED (test_pinjamku_flow.py + test_iter2_features.py + test_iter4_rbac_regress.py, -n 0). Frontend: after unregistering old SW + clearing caches, the new sw.js v2 (pinjamku-shell-v2) is the only registered SW; it only registers for GETs with mode='navigate' and skips /api/ and /cdn-cgi/. Login as Superadmin (081200000001) and open /profile via (a) user-menu -> menu-profile, (b) direct URL, (c) 3x reload, and (d) rapid nav dashboard->profile->settings->profile->dashboard->profile: NO 'pageerror', NO console error, NO 'Failed to fetch' text on page. Only ERR_ABORTED entries in the network log are Cloudflare RUM beacons, background /api/public/settings, and unsplash image aborted during navigation — these are swallowed by the unhandledrejection guard in index.js and no longer surface to the user. Identitas card now shows all 7 fields: Nomor HP, Email, Role, Status Akun, Telegram Chat ID, Login Terakhir, Terdaftar. Editing Nama Lengkap + Telegram Chat ID via profile-save-btn persists across reload (Super Admin Iter5 / 987654321 confirmed). Change-password flow tested with a fresh Admin (not superadmin): profile-current/new-password + change-password-btn succeeded and login with new password worked. Other roles /profile all clean (no overlay/errors): Admin, Lender (bank fields editable), Borrower (NIK masked as 3200********0002, Limit/rekening visible). Regression: Superadmin /settings shows 4 tabs [Umum, Pinjaman, Telegram, Sistem]; Admin -> /settings and /audit-logs both redirect to /dashboard. Superadmin dashboard renders with counters and charts.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_pinjamku_flow.py",
+    "/app/backend/tests/test_iter2_features.py",
+    "/app/backend/tests/test_iter4_rbac_regress.py",
+    "/app/test_reports/pytest/iter5_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sw.js v2 is minimal and only handles navigations — correct approach. Skipping /api/ and /cdn-cgi/ prevents the earlier bug where a stale SW returned offline.html for failed API asset requests.",
+    "index.js unhandledrejection guard uses regex on the reason message which is fragile if browsers change wording. Consider also checking event.reason instanceof TypeError and document.visibilityState. Current implementation still preventDefaults only when unloading/hidden which is correct scoping.",
+    "SettingsContext still swallows all errors silently in the catch block — fine for public settings but any future required setting would fail invisibly. Consider logging in dev only.",
+    "Profile.jsx renders Identitas without a loading skeleton — if user object is briefly null on first render (e.g. after refresh), some fields display '-' momentarily. Not a bug but a small UX polish.",
+    "No client-side length/format validation on Telegram Chat ID input (numeric-only class 'num' present, but no explicit maxLength). Backend accepts it, so low priority."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (77/77)", "frontend": "100% (profile bug repro pattern, 4 roles, password change, settings/audit RBAC regression)"},
+  "test_credentials": "Superadmin 081200000001 / Sup3rAdmin!2026 (unchanged). Ephemeral Admin/Lender/Borrower created per run.",
+  "seed_data_creation": "Per-run ephemeral users via /api/users (superadmin token) and /api/auth/register (borrower). Superadmin profile fields (full_name -> 'Super Admin Iter5', telegram_chat_id -> '987654321') were updated as part of persistence check.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Bug is fixed. If retesting the SW behavior in a browser with a stale v1 registration, first call navigator.serviceWorker.getRegistrations() + unregister and caches.delete() on all keys before reload, otherwise you may still see the old offline.html fallback until activation. Backend regression bundle for future runs: test_pinjamku_flow.py + test_iter2_features.py + test_iter4_rbac_regress.py with -n 0 (test_iter3_factory_reset.py is destructive and must remain excluded).",
+  "rca of the issue": "Root cause: (1) The old service worker intercepted every same-origin GET (including /api/*, favicon, images) and, on any network failure or abort, responded with offline.html — an HTML document, causing fetch() consumers to throw 'TypeError: Failed to fetch' from failing JSON parsers and surface as an app error overlay. (2) On navigation/reload, in-flight requests (GET /api/public/settings, Cloudflare /cdn-cgi/rum beacon) get ERR_ABORTED; their promise rejections previously bubbled to window.onunhandledrejection as raw 'Failed to fetch'. Fix in place: sw.js v2 only intercepts navigation-mode requests and explicitly skips /api/ and /cdn-cgi/, and index.js adds an unhandledrejection guard that preventDefaults abort-style rejections while the page is unloading or hidden. Verified: after unregistering the stale SW and reloading, no pageerror/console-error/text-overlay occurs across menu-nav, direct-URL, multi-reload and rapid-nav patterns for Superadmin (and all other roles)."
+}

@@ -6,7 +6,7 @@ import { PageHeader, Field, StatusBadge } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { rupiah, maskNik, formatDate } from "@/lib/format";
+import { rupiah, maskNik, formatDate, formatDateTime } from "@/lib/format";
 
 export default function Profile() {
   const { user, refresh } = useAuth();
@@ -72,6 +72,12 @@ export default function Profile() {
           </div>
           <div className="grid grid-cols-2 gap-5">
             <Field label="Nomor HP" value={user?.phone} mono />
+            {!isBorrower && <Field label="Email" value={user?.email} />}
+            {!isBorrower && <Field label="Role" value={{ superadmin: "Superadmin", admin: "Admin", lender: "Pendana" }[user?.role]} />}
+            {!isBorrower && <Field label="Status Akun" value={user?.is_active === false ? "Nonaktif" : "Aktif"} />}
+            {!isBorrower && <Field label="Telegram Chat ID" value={user?.telegram_chat_id || "Belum diatur"} mono />}
+            {!isBorrower && <Field label="Login Terakhir" value={user?.last_login_at ? formatDateTime(user.last_login_at) : "-"} />}
+            {!isBorrower && <Field label="Terdaftar" value={user?.created_at ? formatDate(user.created_at) : "-"} />}
             {isBorrower && <Field label="NIK" value={maskNik(user?.nik)} mono />}
             {isBorrower && <Field label="Tanggal Lahir" value={user?.birth_date ? formatDate(user.birth_date) : "-"} />}
             {isBorrower && <Field label="Limit" value={rupiah(user?.credit?.borrower_limit)} mono />}

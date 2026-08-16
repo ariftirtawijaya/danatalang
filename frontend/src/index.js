@@ -15,6 +15,16 @@ root.render(
   </QueryClientProvider>
 );
 
+// Requests cancelled by a page navigation (analytics beacons, in-flight GETs) reject with
+// "Failed to fetch". They are harmless, so keep them from surfacing as app errors.
+let unloading = false;
+["pagehide", "beforeunload"].forEach((e) => window.addEventListener(e, () => { unloading = true; }));
+window.addEventListener("unhandledrejection", (event) => {
+  const message = String(event.reason?.message || event.reason || "");
+  const isAbort = /Failed to fetch|NetworkError|load failed|aborted/i.test(message);
+  if (isAbort && (unloading || document.visibilityState === "hidden")) event.preventDefault();
+});
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
