@@ -56,6 +56,15 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - **Re-auth tidak lagi auto-logout**: password salah pada `/auth/profile`, `/auth/password`, `/settings/factory-reset` mengembalikan 400 + interceptor axios mem-whitelist endpoint tersebut; sesi kedaluwarsa asli tetap auto-logout
 - Hasil tes: iterasi 5 **77/77**, iterasi 6 **85/85**, iterasi 7 **88/88** backend + frontend 100%
 
+## Iterasi 8–11 (16 Agustus 2026) — pemulihan akses & hardening login
+- **Diagnosis bug user** ("superadmin/admin tidak bisa login"): tidak ada satu pun entri audit `PASSWORD_CHANGED` dari user → perubahan password tidak pernah tersimpan; akun juga terkunci 5 percobaan dengan pesan generik
+- **Ganti password**: menolak password baru yang sama, membersihkan lock login akun tersebut, dan memaksa re-login (auto logout + redirect `/login`) sehingga user pasti tahu password aktif
+- **Pesan login informatif**: percobaan 1–4 → 401 dengan sisa percobaan; percobaan ke-5 dst → 429 "Akun terkunci sementara, coba lagi dalam 15 menit"
+- **Rate limit per akun** (`phone:<nomor>`), bukan per IP proxy ingress; IP klien dari `X-Forwarded-For` hanya untuk pencatatan
+- **Break-glass Superadmin**: `SUPERADMIN_RECOVERY=true` di `backend/.env` memulihkan password Superadmin dari env saat startup + audit `SUPERADMIN_PASSWORD_RECOVERED`
+- **Remediasi data**: Admin Billy Aldy direset ke password sementara, lock login dibersihkan, dan 40 akun + 10 pinjaman sisa pengujian dihapus sehingga hanya 3 akun milik user yang tersisa
+- Hasil tes: iterasi 9 **96/96**, iterasi 10 **102/103** (1 bug boundary), iterasi 11 **103/103 + 7/7 lockout strict**, frontend 100%
+
 ## Backlog
 - P1: Grafik tren pelunasan & aging overdue; notifikasi in-app
 - P1: Reset password mandiri (OTP/WA) untuk Peminjam

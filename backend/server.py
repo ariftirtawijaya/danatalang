@@ -82,6 +82,32 @@ async def seed_superadmin():
     logger.info("superadmin seeded")
 
 
+async def superadmin_recovery():
+    """Break-glass: set SUPERADMIN_RECOVERY=true in backend/.env to force the primary
+    Superadmin password back to SUPERADMIN_PASSWORD on the next backend start."""
+    if (os.environ.get("SUPERADMIN_RECOVERY") or "").strip().lower() not in ("1", "true", "yes"):
+        return
+    password = os.environ.get("SUPERADMIN_PASSWORD")
+    if not password:
+        logger.warning("SUPERADMIN_RECOVERY set but SUPERADMIN_PASSWORD is empty")
+        return
+    from core import audit
+
+    keeper = await db.users.find_one({"role": ROLE_SUPERADMIN}, sort=[("created_at", 1)])
+    if not keeper:
+        return
+    await db.users.update_one(
+        {"_id": keeper["_id"]},
+        {"$set": {"password_hash": hash_password(password), "is_active": True, "must_change_password": False}},
+    )
+    await db.login_attempts.delete_many({})
+    await audit(
+        None, keeper, "SUPERADMIN_PASSWORD_RECOVERED", "user", str(keeper["_id"]),
+        "Password Superadmin dipulihkan dari environment variable (SUPERADMIN_RECOVERY).",
+    )
+    logger.warning("superadmin password recovered from env; remove SUPERADMIN_RECOVERY from .env")
+
+
 async def normalize_existing_phones():
     """Ensure every stored phone uses the single canonical format (0xxxxxxxxxx)."""
     from core import normalize_phone
@@ -113,6 +139,7 @@ async def startup():
     await get_settings()
     await normalize_existing_phones()
     await seed_superadmin()
+    await superadmin_recovery()
     try:
         await asyncio.to_thread(init_storage)
     except Exception as e:

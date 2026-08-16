@@ -58,6 +58,19 @@ class LoginIn(BaseModel):
     password: str
 
 
+def client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def lock_key(phone: str) -> str:
+    """Bucket brute-force attempts per account. Keyed by phone (not IP) because behind the
+    ingress the socket peer is an internal proxy pod, which would split the counter."""
+    return f"phone:{phone}"
+
+
 async def _check_lock(identifier: str):
     rec = await db.login_attempts.find_one({"_id": identifier})
     if not rec:
@@ -131,15 +144,28 @@ async def register(payload: RegisterIn, request: Request):
 @router.post("/login")
 async def login(payload: LoginIn, request: Request):
     phone = normalize_phone(payload.phone)
-    ip = request.client.host if request.client else "unknown"
-    identifier = f"{ip}:{phone}"
+    ip = client_ip(request)
+    identifier = lock_key(phone)
     await _check_lock(identifier)
     user = await db.users.find_one({"phone": phone})
     if not user or not verify_password(payload.password, user.get("password_hash", "")):
-        await db.login_attempts.update_one(
-            {"_id": identifier}, {"$inc": {"count": 1}, "$set": {"last_at": iso(now_utc())}}, upsert=True
+        rec = await db.login_attempts.find_one_and_update(
+            {"_id": identifier},
+            {"$inc": {"count": 1}, "$set": {"last_at": iso(now_utc()), "ip": ip}},
+            upsert=True,
+            return_document=True,
         )
-        raise HTTPException(status_code=401, detail="Nomor HP atau password salah")
+        count = (rec or {}).get("count", 1)
+        if count >= MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Terlalu banyak percobaan login. Akun terkunci sementara, coba lagi dalam {LOCK_MINUTES} menit.",
+            )
+        left = MAX_ATTEMPTS - count
+        raise HTTPException(
+            status_code=401,
+            detail=f"Nomor HP atau password salah. Sisa {left} percobaan sebelum akun terkunci {LOCK_MINUTES} menit.",
+        )
     if user.get("is_active") is False:
         raise HTTPException(status_code=403, detail="Akun Anda dinonaktifkan. Hubungi Admin.")
     await db.login_attempts.delete_one({"_id": identifier})
@@ -226,6 +252,13 @@ class PasswordIn(BaseModel):
 async def change_password(payload: PasswordIn, request: Request, user: dict = Depends(get_current_user)):
     if not verify_password(payload.current_password, user.get("password_hash", "")):
         raise HTTPException(status_code=400, detail="Password saat ini salah")
-    await db.users.update_one({"_id": user["_id"]}, {"$set": {"password_hash": hash_password(payload.new_password), "must_change_password": False}})
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=400, detail="Password baru harus berbeda dari password saat ini")
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password_hash": hash_password(payload.new_password), "must_change_password": False}},
+    )
+    if user.get("phone"):
+        await db.login_attempts.delete_many({"_id": lock_key(user["phone"])})
     await audit(request, user, "PASSWORD_CHANGED", "user", str(user["_id"]), "Password diubah")
-    return {"ok": True}
+    return {"ok": True, "relogin_required": True}

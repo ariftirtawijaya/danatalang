@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 11 verifies the boundary fix in POST /api/auth/login and cleans up leftover TEST_* data. Backend full serial regression: 103/103 passed (test_pinjamku_flow + iter2 + iter4 + iter6 + iter8 + iter10). Strict iter10 lockout suite: 7/7 passed (attempts 1-4 => 401 with 'Sisa 4/3/2/1'; attempts 5 AND 6 => 429 'Akun terkunci sementara, coba lagi dalam 15 menit'). Per-account rate-limit key confirmed as single Mongo doc _id='phone:<nomor>' with count and ip fields; correct password during lock still 429; change_password removes the lock doc; successful login also resets the counter. Frontend: Superadmin (081200000001 / Sup3rAdmin!2026) logs in to /dashboard cleanly; /profile loads with no 'Failed to fetch'; on wrong password toasts progressively show 'Sisa 4/3/2/1' and the 5th attempt shows the lockout toast (429); Billy admin (082130018893 / Pk5DRIEHO5!) still lands on data-testid=force-password-page. Data cleanup: removed 40 TEST_* users + 10 orphan loans + 1 iter11 TEST admin; login_attempts collection cleared. Final DB: only 3 canonical users (Super Admin, Billy Aldy, Muhammad Arif), superadmin count=1, .env has no SUPERADMIN_RECOVERY.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_lockout_per_account.py",
+    "/app/test_reports/pytest/iter11_iter10_lockout.xml",
+    "/app/test_reports/pytest/iter11_full_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "auth_routes.py::login() now correctly raises 429 immediately when count >= MAX_ATTEMPTS after find_one_and_update, fixing the iter10 off-by-one. Lockout message on 5th failure is user-facing and clear.",
+    "change_password guards with `if user.get('phone')` before deleting the lock key — safe.",
+    "client_ip() reads X-Forwarded-For only for storage/logging, not as a rate-limit key. Documented in lock_key() docstring."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (103/103 regression + 7/7 iter10 strict)", "frontend": "100% (super dashboard, /profile, progressive toasts + 429, Billy force-password all verified)"},
+  "test_credentials": "Superadmin 081200000001 / Sup3rAdmin!2026 (verified via UI). Billy admin 082130018893 / Pk5DRIEHO5! (must_change_password=true, force-password-page). Borrower 089529303412 Muhammad Arif untouched.",
+  "seed_data_creation": "Created and cleaned up 1 TEST admin (TEST_fe_iter11 / 08915529560) for the frontend lockout test. Also deleted 40 preexisting TEST_* users and 10 related loans left by prior iterations. Final DB has exactly the 3 canonical users; login_attempts collection is empty.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All lockout regression is green. Serial pytest command: `cd /app/backend && python -m pytest tests/test_pinjamku_flow.py tests/test_iter2_features.py tests/test_iter4_rbac_regress.py tests/test_iter6_phone_change.py tests/test_iter8_password_change.py tests/test_iter10_lockout_per_account.py -n 0`. DO NOT run tests/test_iter3_factory_reset.py. Backend URL from REACT_APP_BACKEND_URL. For any lockout tests, always clear login_attempts first (Mongo) or use fresh unique phones.",
+  "rca of the issue": "Iter10 reported an off-by-one where the 5th wrong login returned 401 with an empty 'Sisa' suffix instead of 429. Main agent fixed by moving the lockout branch to right after the counter increment: if the newly incremented count >= MAX_ATTEMPTS, raise HTTP 429 with the 15-menit lockout message instead of falling through to the 401 'Sisa N' branch. Verified in iter11 with the strict test_progressive_then_429 case (attempts 5 and 6 both 429) and via the frontend toast on attempt 5."
+}

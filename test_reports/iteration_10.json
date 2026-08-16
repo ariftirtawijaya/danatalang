@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 10 tests the per-account rate-limit fix (phone-only key + X-Forwarded-For for logging). Backend full regression 96/96 pass serially. New iter10 lockout suite 6/7 pass. One HIGH off-by-one bug found in /api/auth/login: the review spec requires attempts 5 & 6 to both return 429, but implementation returns 401 (with empty suffix, left=0) on attempt 5 and only 429 from attempt 6 onward. Per-account bucketing itself works correctly across preview URL / ingress: single doc _id 'phone:<phone>' with count and ip fields, no IP-split buckets. Lockout honors account (correct password during lock -> 429). Change password now clears the correct key. Successful login also clears the counter. Frontend: superadmin login OK, wrong password shows toast 'Nomor HP atau password salah. Sisa 4 percobaan sebelum akun terkunci 15 menit' and user stays on /login. /profile has no 'Failed to fetch'. Billy still shows data-testid=force-password-page. Final state: 1 superadmin, 3 canonical accounts intact, login_attempts empty, .env has no SUPERADMIN_RECOVERY.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/auth/login", "issue": "Off-by-one lockout: with MAX_ATTEMPTS=5, the 5th consecutive wrong attempt returns 401 with detail 'Nomor HP atau password salah.' (empty 'Sisa' suffix because left=max(0,5-5)=0) instead of 429. Only from attempt 6 onward does _check_lock trigger the 429. Review spec explicitly requires attempts 5 AND 6 to be 429. Fix: either check `count > MAX_ATTEMPTS-1` before incrementing (already done in _check_lock, but semantics need shifting) or, more simply, after incrementing, if new count >= MAX_ATTEMPTS raise 429 immediately with lockout message instead of falling through to the 401 branch. UX also suffers: the 5th attempt tells the user nothing about being locked.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_lockout_per_account.py",
+    "/app/test_reports/pytest/iter10_lockout.xml",
+    "/app/test_reports/pytest/iter10_regress.xml"
+  ],
+  "action_items": [
+    "Backend: fix off-by-one in POST /api/auth/login so attempts 5 & 6 both return 429 (see snippet: after `find_one_and_update`, if `rec['count'] >= MAX_ATTEMPTS` raise 429 with the 15-menit message directly instead of returning 401 with an empty-suffix message).",
+    "Optional: after fix, tighten /app/backend/tests/test_iter8_password_change.py TestLoginLockout.test_progressive_messages to strict assertions (Sisa 4/3/2/1 then two 429s) — currently lenient."
+  ],
+  "critical_code_review_comments": [
+    "auth_routes.py login(): the branch that increments the counter still returns 401 even when the counter has reached MAX_ATTEMPTS, so the transition into 429 is deferred by one request. Consolidate the lockout check right after incrementing.",
+    "auth_routes.py client_ip() uses only the leftmost X-Forwarded-For entry without trusting a fixed proxy chain. Fine for logging, but should be documented as untrusted (never use directly as rate-limit key).",
+    "change_password uses `lock_key(user.get('phone') or '')` — if phone is falsy the key would be 'phone:' and could delete other empties; safe today but consider a guard."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter10_lockout_per_account.py (new, 7 tests: strict progressive+429, locked-with-correct-pw, change-password-clears-lock, success-resets-counter, env/super/canonical checks)"
+  ],
+  "success_rate": {"backend": "98.5% (102/103: 96/96 regression + 6/7 iter10 lockout)", "frontend": "100% (super login, wrong-pw toast, /profile, Billy force-password all verified)"},
+  "test_credentials": "Superadmin 081200000001 / Sup3rAdmin!2026 (verified logs in via UI to /dashboard). Billy admin 082130018893 / Pk5DRIEHO5! (must_change_password=true, hits force-password-page). Borrower 089529303412 Muhammad Arif untouched.",
+  "seed_data_creation": "During iter10 tests TEST_iter10_* admin accounts were created and cleaned up. Final: login_attempts collection empty, no TEST_* users, 3 canonical users preserved, superadmin count=1.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Per-account rate-limit key (phone:<nomor>) is confirmed working across the ingress — a single mongodb doc is observed and successful/change-password paths clear it correctly. The remaining defect is the 401 vs 429 boundary at attempt 5 in auth_routes.py::login. Backend regression must still be run with `-n 0`. Do NOT run test_iter3_factory_reset.py. Run this iteration's new suite: `cd /app/backend && python -m pytest tests/test_iter10_lockout_per_account.py -n 0 -v`.",
+  "rca of the issue": "Original user bug (superadmin/admin can't login after password change) was fixed in prior iterations. Iteration-9 found that the rate-limit key was 'ip:phone' with request.client.host being the internal proxy pod IP, splitting counters across replicas. Iter10 fix confirmed: `lock_key = phone:<nomor>` and `client_ip` reads X-Forwarded-For only for storage. Verified by hitting the public preview URL (ingress) 6 times and observing exactly one login_attempts doc with `_id='phone:<phone>'` and count>=5 with an `ip` field. Change-password path uses the same key and removes it, so a user who barely locked out and then changes password no longer has a residual lock. Remaining bug: attempt 5 returns 401 instead of 429 because the guard in _check_lock only fires when count>=MAX_ATTEMPTS on the NEXT request; the counter-increment branch never converts to 429 when it just crossed the threshold."
+}

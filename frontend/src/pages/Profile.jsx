@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
@@ -9,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { rupiah, maskNik, formatDate, formatDateTime } from "@/lib/format";
 
 export default function Profile() {
-  const { user, refresh } = useAuth();
+  const { user, refresh, logout } = useAuth();
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     full_name: user?.full_name || "",
     email: user?.email || "",
@@ -67,7 +69,11 @@ export default function Profile() {
     try {
       await api.put("/auth/password", pw);
       setPw({ current_password: "", new_password: "" });
-      toast.success("Password berhasil diubah");
+      toast.success("Password berhasil diubah. Silakan login kembali dengan password baru Anda.");
+      setTimeout(async () => {
+        await logout();
+        navigate("/login", { replace: true });
+      }, 1200);
     } catch (err) {
       toast.error(errMsg(err));
     } finally {
