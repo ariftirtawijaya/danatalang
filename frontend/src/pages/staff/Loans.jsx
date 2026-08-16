@@ -17,7 +17,7 @@ const STATUS_OPTIONS = [
   { value: "FUNDING_CLAIMED", label: "Sudah Diklaim Pendana" },
   { value: "WAITING_DISBURSEMENT_CONFIRMATION", label: "Konfirmasi Pencairan" },
   { value: "ACTIVE", label: "Aktif" },
-  { value: "OVERDUE", label: "Overdue" },
+  { value: "OVERDUE", label: "Terlambat" },
   { value: "WAITING_PAYMENT_VERIFICATION", label: "Verifikasi Pembayaran" },
   { value: "PAID", label: "Lunas" },
   { value: "REJECTED", label: "Ditolak" },

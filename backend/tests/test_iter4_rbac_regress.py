@@ -17,8 +17,8 @@ def _base():
 
 BASE = _base()
 assert BASE, "REACT_APP_BACKEND_URL missing"
-SUPER_PHONE = "081200000001"
-SUPER_PASS = "Sup3rAdmin!2026"
+SUPER_PHONE = os.environ.get("TEST_SUPER_PHONE", "081900000777")
+SUPER_PASS = os.environ.get("TEST_SUPER_PASS", "TempSup3r!2026")
 
 
 def _login(phone, password):

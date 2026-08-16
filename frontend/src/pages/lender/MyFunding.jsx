@@ -8,7 +8,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const TABS = [
   { key: "open", label: "Berjalan", status: "FUNDING_CLAIMED,WAITING_DISBURSEMENT_CONFIRMATION,ACTIVE,OVERDUE,WAITING_PAYMENT_VERIFICATION" },
   { key: "active", label: "Aktif", status: "ACTIVE" },
-  { key: "overdue", label: "Overdue", status: "OVERDUE" },
+  { key: "overdue", label: "Terlambat", status: "OVERDUE" },
   { key: "paid", label: "Lunas", status: "PAID" },
 ];
 

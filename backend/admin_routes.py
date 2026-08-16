@@ -99,7 +99,7 @@ async def dashboard(user: dict = Depends(get_current_user)):
         out["monthly"] = sorted(monthly.values(), key=lambda x: x["month"])[-6:]
         out["status_breakdown"] = [
             {"name": "Aktif", "value": out["active_loans"]},
-            {"name": "Overdue", "value": out["overdue_loans"]},
+            {"name": "Terlambat", "value": out["overdue_loans"]},
             {"name": "Lunas", "value": out["paid_loans"]},
             {"name": "Menunggu", "value": out["waiting_approval"] + out["waiting_funding"]},
         ]

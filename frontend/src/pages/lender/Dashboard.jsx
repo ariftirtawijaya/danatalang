@@ -30,7 +30,7 @@ export default function LenderDashboard() {
           <StatCard testId="stat-claimed" label="Menunggu Pencairan" value={s?.claimed_not_disbursed ?? 0} icon={Clock} tone="pending" />
           <StatCard testId="stat-active" label="Pinjaman Aktif" value={s?.active_loans ?? 0} icon={Wallet} tone="active" />
           <StatCard testId="stat-verify" label="Verifikasi Pembayaran" value={s?.waiting_payment_verification ?? 0} icon={Receipt} tone="pending" />
-          <StatCard testId="stat-overdue" label="Overdue" value={s?.overdue_loans ?? 0} icon={AlertTriangle} tone="warning" />
+          <StatCard testId="stat-overdue" label="Terlambat" value={s?.overdue_loans ?? 0} icon={AlertTriangle} tone="warning" />
           <StatCard testId="stat-active-principal" label="Total Pokok Aktif" value={rupiah(s?.total_active_principal)} icon={Coins} tone="active" />
           <StatCard testId="stat-disbursed" label="Total Dicairkan" value={rupiah(s?.total_disbursed)} icon={TrendingUp} />
           <StatCard testId="stat-returned" label="Pokok Kembali" value={rupiah(s?.total_principal_returned)} icon={BadgeCheck} tone="success" />

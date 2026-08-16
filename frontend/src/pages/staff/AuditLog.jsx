@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
+import { actionLabel, entityLabel } from "@/lib/status";
 import { PageHeader, EmptyState, LoadingRows } from "@/components/common";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -47,10 +48,10 @@ export default function AuditLog() {
                   <TableRow key={a.id}>
                     <TableCell className="whitespace-nowrap text-xs">{formatDateTime(a.created_at)}</TableCell>
                     <TableCell className="text-xs font-medium">{a.user_name || "-"}</TableCell>
-                    <TableCell className="text-xs uppercase">{a.role || "-"}</TableCell>
-                    <TableCell className="text-xs font-semibold">{a.action}</TableCell>
+                    <TableCell className="text-xs">{{ superadmin: "Superadmin", admin: "Admin", lender: "Pendana", borrower: "Peminjam" }[a.role] || "-"}</TableCell>
+                    <TableCell className="text-xs font-semibold">{actionLabel(a.action)}</TableCell>
                     <TableCell className="max-w-sm text-xs">{a.description}</TableCell>
-                    <TableCell className="text-xs">{a.entity_type}</TableCell>
+                    <TableCell className="text-xs">{entityLabel(a.entity_type)}</TableCell>
                     <TableCell className="num text-xs">{a.ip_address || "-"}</TableCell>
                   </TableRow>
                 ))}

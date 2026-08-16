@@ -25,6 +25,63 @@ export const PAYMENT_STATUS = {
   REJECTED: { label: "Ditolak", tone: "rejected" },
 };
 
+export const statusLabel = (value) => {
+  if (!value) return "-";
+  return (LOAN_STATUS[value] || ACCOUNT_STATUS[value] || PAYMENT_STATUS[value] || {}).label || value;
+};
+
+export const ACTION_LABELS = {
+  LOGIN: "Login",
+  LOGOUT: "Logout",
+  BORROWER_REGISTERED: "Registrasi Peminjam",
+  BORROWER_VERIFIED: "Peminjam Disetujui",
+  BORROWER_REJECTED: "Peminjam Ditolak",
+  BORROWER_LIMITS_UPDATED: "Limit Peminjam Diubah",
+  BORROWER_STATUS_CHANGED: "Status Peminjam Diubah",
+  ADMIN_NOTE_ADDED: "Catatan Internal Ditambahkan",
+  LOAN_SUBMITTED: "Pengajuan Pinjaman",
+  LOAN_APPROVED: "Pengajuan Disetujui",
+  LOAN_REJECTED: "Pengajuan Ditolak",
+  FUNDING_CLAIMED: "Pendanaan Diambil",
+  DISBURSEMENT_REPORTED: "Pencairan Dilaporkan",
+  DISBURSEMENT_CONFIRMED: "Pencairan Dikonfirmasi",
+  PAYMENT_SUBMITTED: "Pembayaran Dilaporkan",
+  PAYMENT_VERIFIED: "Pembayaran Diverifikasi",
+  PAYMENT_REJECTED: "Pembayaran Ditolak",
+  SUPERADMIN_PAYMENT_OVERRIDE_VERIFY: "Override Superadmin — Ditandai Lunas",
+  SUPERADMIN_PAYMENT_OVERRIDE_REJECT: "Override Superadmin — Pembayaran Ditolak",
+  USER_CREATED: "Pengguna Dibuat",
+  USER_UPDATED: "Pengguna Diperbarui",
+  PROFILE_UPDATED: "Profil Diperbarui",
+  PASSWORD_CHANGED: "Password Diubah",
+  PASSWORD_RESET: "Password Direset",
+  LOGIN_PHONE_CHANGED: "Nomor HP Login Diubah",
+  SUPERADMIN_PASSWORD_RECOVERED: "Password Superadmin Dipulihkan",
+  SETTINGS_GENERAL_UPDATED: "Pengaturan Umum Diubah",
+  SETTINGS_BRANDING_UPDATED: "Logo/Icon Diubah",
+  SETTINGS_LOAN_UPDATED: "Bunga & Denda Diubah",
+  SETTINGS_TELEGRAM_UPDATED: "Pengaturan Telegram Diubah",
+  SYSTEM_FACTORY_RESET: "Factory Reset Sistem",
+};
+
+export const actionLabel = (action) =>
+  ACTION_LABELS[action] ||
+  String(action || "-")
+    .toLowerCase()
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+
+export const ENTITY_LABELS = {
+  user: "Pengguna",
+  loan: "Pinjaman",
+  payment: "Pembayaran",
+  settings: "Pengaturan",
+  system: "Sistem",
+};
+
+export const entityLabel = (entity) => ENTITY_LABELS[entity] || entity || "-";
+
 export const TONE_CLASS = {
   pending: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300",
   active: "bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300",

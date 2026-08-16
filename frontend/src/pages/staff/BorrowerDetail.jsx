@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LoanCard } from "@/pages/borrower/Home";
+import { statusLabel, actionLabel } from "@/lib/status";
 import { ArrowLeft } from "lucide-react";
 
 export default function BorrowerDetail() {
@@ -114,7 +115,7 @@ export default function BorrowerDetail() {
                 <Field label="Tanggal Lahir" value={p.birth_date ? formatDate(p.birth_date) : "-"} />
                 <Field label="No HP" value={p.phone} mono />
                 <Field label="Email" value={p.email} />
-                <Field label="Status Akun" value={p.account_status} />
+                <Field label="Status Akun" value={statusLabel(p.account_status)} />
                 {p.verified_by_name && <Field label="Diverifikasi Oleh" value={p.verified_by_name} />}
                 {p.verified_at && <Field label="Waktu Verifikasi" value={formatDateTime(p.verified_at)} />}
                 {p.rejection_reason && <Field label="Alasan Penolakan" value={p.rejection_reason} />}
@@ -209,7 +210,7 @@ export default function BorrowerDetail() {
             <div className="space-y-3">
               {data.audit.map((a, i) => (
                 <div key={i} className="rounded-xl border bg-card p-4">
-                  <p className="text-sm font-medium">{a.action}</p>
+                  <p className="text-sm font-medium">{actionLabel(a.action)}</p>
                   <p className="text-xs text-muted-foreground">{a.description}</p>
                   <p className="mt-1 text-[10px] uppercase tracking-widest text-muted-foreground">{a.user_name} · {formatDateTime(a.created_at)}</p>
                 </div>
@@ -331,9 +332,9 @@ export default function BorrowerDetail() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="ACTIVE">ACTIVE</SelectItem>
-                <SelectItem value="SUSPENDED">SUSPENDED</SelectItem>
-                <SelectItem value="BLOCKED">BLOCKED</SelectItem>
+                <SelectItem value="ACTIVE">Aktif</SelectItem>
+                <SelectItem value="SUSPENDED">Ditangguhkan</SelectItem>
+                <SelectItem value="BLOCKED">Diblokir</SelectItem>
               </SelectContent>
             </Select>
             <Textarea data-testid="status-reason-input" value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="Alasan (opsional)" />

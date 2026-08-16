@@ -153,7 +153,7 @@ export default function Users() {
                   <TableCell className="font-medium">{u.full_name}</TableCell>
                   <TableCell className="num text-xs">{u.phone}</TableCell>
                   <TableCell className="text-xs">{u.email}</TableCell>
-                  <TableCell className="text-xs uppercase">{u.role}</TableCell>
+                  <TableCell className="text-xs">{{ superadmin: "Superadmin", admin: "Admin", lender: "Pendana", borrower: "Peminjam" }[u.role] || u.role}</TableCell>
                   {role === "lender" && (
                     <TableCell className="text-xs">
                       {u.bank_name ? `${u.bank_name} · ${u.account_number}` : "-"}

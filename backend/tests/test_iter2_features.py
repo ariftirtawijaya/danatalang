@@ -13,8 +13,8 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://utang-tracker-3.prev
 API = f"{BASE_URL}/api"
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
-SUPER_PHONE = "081200000001"
-SUPER_PASS = "Sup3rAdmin!2026"
+SUPER_PHONE = os.environ.get("TEST_SUPER_PHONE", "081900000777")
+SUPER_PASS = os.environ.get("TEST_SUPER_PASS", "TempSup3r!2026")
 
 STATE = {}
 
@@ -63,16 +63,19 @@ def super_token():
 # ============== 1. PHONE NORMALIZATION ==============
 class TestPhoneNormalization:
     def test_super_login_08_format(self):
-        assert _login("081200000001", SUPER_PASS)["user"]["phone"] == "081200000001"
+        assert _login(SUPER_PHONE, SUPER_PASS)["user"]["phone"] == SUPER_PHONE
 
     def test_super_login_62_format(self):
-        assert _login("6281200000001", SUPER_PASS)["user"]["phone"] == "081200000001"
+        p62 = "62" + SUPER_PHONE[1:]
+        assert _login(p62, SUPER_PASS)["user"]["phone"] == SUPER_PHONE
 
     def test_super_login_plus62_format(self):
-        assert _login("+6281200000001", SUPER_PASS)["user"]["phone"] == "081200000001"
+        p = "+62" + SUPER_PHONE[1:]
+        assert _login(p, SUPER_PASS)["user"]["phone"] == SUPER_PHONE
 
     def test_super_login_0062_format(self):
-        assert _login("00628 1200000001", SUPER_PASS)["user"]["phone"] == "081200000001"
+        p = "0062" + SUPER_PHONE[1:]
+        assert _login(p, SUPER_PASS)["user"]["phone"] == SUPER_PHONE
 
     def test_register_dup_phone_via_diff_format(self, super_token):
         # register borrower with +62 format

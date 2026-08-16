@@ -65,6 +65,14 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - **Remediasi data**: Admin Billy Aldy direset ke password sementara, lock login dibersihkan, dan 40 akun + 10 pinjaman sisa pengujian dihapus sehingga hanya 3 akun milik user yang tersisa
 - Hasil tes: iterasi 9 **96/96**, iterasi 10 **102/103** (1 bug boundary), iterasi 11 **103/103 + 7/7 lockout strict**, frontend 100%
 
+## Iterasi 12–14 (16 Agustus 2026) — label UI berbahasa Indonesia
+- `src/lib/status.js` menjadi satu sumber label: `statusLabel()` (status pinjaman/akun/pembayaran), `actionLabel()` (aksi audit), `entityLabel()` (jenis entitas), plus fallback title-case agar aksi baru tidak pernah bocor sebagai enum
+- **Timeline detail pinjaman** kini penuh bahasa Indonesia (Menunggu Approval → Menunggu Pendanaan → Menunggu Pencairan → Konfirmasi Pencairan → Aktif → Verifikasi Pembayaran → Lunas); nol enum mentah
+- Audit Log (aksi/role/entitas), detail Peminjam (Status Akun, tab Audit, dropdown Ubah Status "Aktif/Ditangguhkan/Diblokir" dengan nilai enum tetap dikirim ke backend), daftar Pengguna (role), daftar Pinjaman & Pembayaran ikut dirapikan
+- Label "Overdue" diganti "Terlambat" di menu sidebar, filter status, tab Pendana, kolom laporan, kartu statistik dashboard, dan label pie chart backend
+- Suite regresi dilepas dari kredensial user: `tests/conftest.py` + `_setup_temp_super.py` membuat superadmin sementara (UUID string) lalu menghapusnya
+- Hasil tes: iterasi 13 frontend **100%**; iterasi 14 **102 lolos / 1 skip / 0 gagal** + UI 100%, data user tetap utuh (5 akun, 2 pinjaman)
+
 ## Backlog
 - P1: Grafik tren pelunasan & aging overdue; notifikasi in-app
 - P1: Reset password mandiri (OTP/WA) untuk Peminjam

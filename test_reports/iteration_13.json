@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 13 verifies the Indonesian status/action/entity labels added in iter12. Playwright UI: (P1) Loan detail /loans/914da6a0... (PAID loan, read-only) — data-testid=loan-timeline renders a full 7-step timeline entirely in Indonesian (Menunggu Approval → Menunggu Pendanaan → Menunggu Pencairan → Konfirmasi Pencairan → Aktif → Verifikasi Pembayaran → Lunas). Regex /[A-Z]{3,}_[A-Z]/ returns ZERO matches in timeline. (P2) /audit-logs, /users, /loans, /payments, /borrowers/{id} — regex returns ZERO enum-shaped tokens on all pages. Audit page shows 'Pengajuan Pinjaman', 'Pendanaan Diambil', 'Peminjam Disetujui', 'Login'; entity column shows 'Pengguna/Pinjaman/Pembayaran/Pengaturan'; role column shows 'Superadmin/Admin/Pendana/Peminjam'. Borrower detail /borrowers/a8854275... shows 'STATUS AKUN: Aktif' and Ubah Status dropdown lists exactly 'Aktif / Ditangguhkan / Diblokir'. Loans list badges show 'Lunas', 'Aktif', 'Menunggu ...'. (P4 backend regression) BLOCKED — see rca; not executed. (Cleanup) Temp superadmin 081900000777 deleted, login_attempts cleared, all 3 user accounts (superadmin 08123456789, admin 082130018893, borrower 089529303412) and their 2 loans (PAID + WAITING_DISBURSEMENT_CONFIRMATION) untouched.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Left sidebar (all authenticated pages)", "issues": ["Menu item labelled 'Overdue' in English — inconsistent with Indonesian labels elsewhere; should be 'Terlambat' to match statusLabel(OVERDUE)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/frontend/src/lib/status.js",
+    "/app/frontend/src/pages/LoanDetail.jsx",
+    "/app/frontend/src/pages/staff/AuditLog.jsx",
+    "/app/frontend/src/pages/staff/BorrowerDetail.jsx",
+    "/app/frontend/src/pages/staff/Users.jsx"
+  ],
+  "action_items": [
+    "Rename sidebar menu item 'Overdue' to 'Terlambat' for consistency with the new Indonesian status labels (only cosmetic).",
+    "IMPORTANT for next testing agent: superadmin phone in DB is now '08123456789' (NOT '081200000001'). All backend regression tests (test_iter2/4/6/8/10 and test_pinjamku_flow) hardcode SUPER_PHONE='081200000001'/Sup3rAdmin!2026 and will fail at the login fixture. Either (a) update the backend tests to read SUPER_PHONE from backend/.env, or (b) reconcile the DB / .env so the seeded superadmin matches. Do NOT modify user data to fix tests."
+  ],
+  "critical_code_review_comments": [
+    "status.js is the single source of truth for LOAN/ACCOUNT/PAYMENT/ACTION/ENTITY labels — clean, ~90 LOC, no duplication.",
+    "statusLabel() correctly falls back through LOAN → ACCOUNT → PAYMENT maps and returns the raw value when unknown (safe fallback, still no enum leaked in observed pages).",
+    "Ubah Status dropdown correctly displays Indonesian labels while (per code) submitting raw enums to backend — backend contract preserved.",
+    "Sidebar navigation still uses 'Overdue' literal (not going through statusLabel) — minor inconsistency."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not executed (env blocker)", "frontend": "100% (all 6 screens verified — zero enum leaks, all required Indonesian labels present)"},
+  "test_credentials": "Superadmin actual phone in DB: 08123456789 (password not tested/changed). Admin Billy 082130018893, Borrower Muhammad Arif 089529303412. Temp super 081900000777 was recreated with a proper UUID _id (the pre-existing one used an ObjectId which broke /api/auth/me → 401) and has been deleted at the end.",
+  "seed_data_creation": "Recreated temp superadmin (phone 081900000777, password TempSup3r!2026) with UUID _id='7e0c1e1b-3471-48c8-a83c-39eec1cd45b1' because the version left by main agent had ObjectId as _id and could not pass /api/auth/me (JWT sub != users._id). Deleted after tests. login_attempts cleared. No other seed data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter12 label rework is fully verified in UI. DB state: 5 users (superadmin phone 08123456789, admin 082130018893 Billy, borrower 089529303412 Muhammad Arif, borrower 089529303411, lender 089513180518), 2 loans (PAID + WAITING_DISBURSEMENT_CONFIRMATION). The 3 accounts mentioned in the task brief as '081200000001' actually live under '08123456789' now — likely a user-side rename. If backend regression is needed again, parametrize SUPER_PHONE from .env or ask user for the current superadmin credentials. Do NOT run tests/test_iter3_factory_reset.py.",
+  "rca of the issue": "Two environmental issues encountered (both worked around, no code fix required): (1) Main agent's temp superadmin was inserted with default Mongo ObjectId as _id; login returned a JWT whose sub was the hex ObjectId, but /api/auth/me and the auth dependency look up users by string UUID _id, so every authenticated call returned 401 'User tidak ditemukan'. Fixed by deleting and re-inserting the temp super with a proper str(uuid.uuid4()) _id. (2) The user's canonical superadmin phone has been changed from 081200000001 → 08123456789 sometime between iter11 and now; all pytest regression suites hardcode 081200000001 and would fail at the login fixture. Documented as action item — did not attempt to modify user's account."
+}

@@ -21,7 +21,7 @@ const staffNav = (role) => [
       { to: "/loans?status=WAITING_FUNDING", label: "Menunggu Pendanaan", icon: HandCoins },
       { to: "/loans?status=WAITING_DISBURSEMENT_CONFIRMATION", label: "Pencairan", icon: Receipt },
       { to: "/loans?status=ACTIVE", label: "Aktif", icon: BadgeCheck },
-      { to: "/loans?status=OVERDUE", label: "Overdue", icon: FileText },
+      { to: "/loans?status=OVERDUE", label: "Terlambat", icon: FileText },
       { to: "/loans?status=PAID", label: "Lunas", icon: BadgeCheck },
     ],
   },

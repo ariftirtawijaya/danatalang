@@ -67,7 +67,7 @@ export default function StaffDashboard() {
             <StatCard testId="stat-waiting-approval" label="Menunggu Approval" value={s?.waiting_approval ?? 0} icon={ClipboardList} tone="pending" />
             <StatCard testId="stat-waiting-funding" label="Menunggu Pendanaan" value={s?.waiting_funding ?? 0} icon={HandCoins} tone="pending" />
             <StatCard testId="stat-active-loans" label="Pinjaman Aktif" value={s?.active_loans ?? 0} icon={BadgeCheck} tone="active" />
-            <StatCard testId="stat-overdue-loans" label="Pinjaman Overdue" value={s?.overdue_loans ?? 0} icon={AlertTriangle} tone="warning" />
+            <StatCard testId="stat-overdue-loans" label="Pinjaman Terlambat" value={s?.overdue_loans ?? 0} icon={AlertTriangle} tone="warning" />
             <StatCard testId="stat-paid-loans" label="Pinjaman Lunas" value={s?.paid_loans ?? 0} icon={BadgeCheck} tone="success" />
             <StatCard testId="stat-outstanding" label="Outstanding Pokok" value={rupiah(s?.total_outstanding_principal)} icon={Coins} tone="active" />
             <StatCard testId="stat-disbursed" label="Total Pencairan" value={rupiah(s?.total_disbursed)} icon={TrendingUp} />

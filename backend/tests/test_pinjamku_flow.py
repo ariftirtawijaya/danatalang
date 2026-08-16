@@ -20,8 +20,8 @@ API = f"{BASE_URL}/api"
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
 
-SUPERADMIN_PHONE = "081200000001"
-SUPERADMIN_PASS = "Sup3rAdmin!2026"
+SUPERADMIN_PHONE = os.environ.get("TEST_SUPER_PHONE", "081900000777")
+SUPERADMIN_PASS = os.environ.get("TEST_SUPER_PASS", "TempSup3r!2026")
 
 
 def _s(token=None):

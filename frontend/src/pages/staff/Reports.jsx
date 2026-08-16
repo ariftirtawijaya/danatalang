@@ -44,7 +44,7 @@ export default function Reports() {
         <StatCard testId="report-interest" label="Bunga Terbayar" value={rupiah(data?.total_interest_paid)} icon={Receipt} tone="success" />
         <StatCard testId="report-latefee" label="Denda Terbayar" value={rupiah(data?.total_late_fee_paid)} icon={AlertTriangle} tone="warning" />
         <StatCard testId="report-active" label="Pinjaman Aktif" value={data?.active_loans ?? 0} icon={Wallet} tone="active" />
-        <StatCard testId="report-overdue" label="Pinjaman Overdue" value={data?.overdue_loans ?? 0} icon={AlertTriangle} tone="warning" />
+        <StatCard testId="report-overdue" label="Pinjaman Terlambat" value={data?.overdue_loans ?? 0} icon={AlertTriangle} tone="warning" />
         <StatCard testId="report-lunas" label="Pinjaman Lunas" value={data?.paid_loans ?? 0} icon={BadgeCheck} tone="success" />
         <StatCard testId="report-borrowers" label="Total Peminjam" value={data?.borrower_count ?? 0} icon={Users} />
         <StatCard testId="report-active-borrowers" label="Peminjam Aktif" value={data?.active_borrower_count ?? 0} icon={Users} tone="success" />
@@ -60,7 +60,7 @@ export default function Reports() {
                   <TableHead>Pendana</TableHead>
                   <TableHead className="text-center">Pinjaman Didanai</TableHead>
                   <TableHead className="text-center">Aktif</TableHead>
-                  <TableHead className="text-center">Overdue</TableHead>
+                  <TableHead className="text-center">Terlambat</TableHead>
                   <TableHead className="text-right">Total Dicairkan</TableHead>
                   <TableHead className="text-right">Pokok Kembali</TableHead>
                   <TableHead className="text-right">Bunga Diterima</TableHead>

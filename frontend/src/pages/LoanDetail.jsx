@@ -6,6 +6,7 @@ import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { rupiah, formatDate, formatDateTime, formatThousand, onlyDigits, maskNik } from "@/lib/format";
 import { StatusBadge, Field, ConfirmDialog, ProofImage, LoadingRows, PageHeader } from "@/components/common";
+import { statusLabel } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -214,7 +215,7 @@ export default function LoanDetail() {
                 <Field label="Nama" value={loan.borrower_name} />
                 <Field label="No HP" value={loan.borrower_phone} mono />
                 {loan.borrower_nik && <Field label="NIK" value={isStaff ? loan.borrower_nik : maskNik(loan.borrower_nik)} mono />}
-                {loan.borrower_account_status && <Field label="Status Akun" value={loan.borrower_account_status} />}
+                {loan.borrower_account_status && <Field label="Status Akun" value={statusLabel(loan.borrower_account_status)} />}
               </div>
               {loan.borrower_bank && (
                 <div className="mt-5 rounded-xl bg-muted p-5">
@@ -299,7 +300,7 @@ export default function LoanDetail() {
                     <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
                     <div>
                       <p className="text-sm font-medium">
-                        {t.from_status ? `${t.from_status} → ${t.to_status}` : t.to_status}
+                        {t.from_status ? `${statusLabel(t.from_status)} → ${statusLabel(t.to_status)}` : statusLabel(t.to_status)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {formatDateTime(t.changed_at)} · {t.changed_by_name}

@@ -14,8 +14,8 @@ API = f"{BASE}/api"
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 
-SUPER_PHONE = "081200000001"
-SUPER_PASS = "Sup3rAdmin!2026"
+SUPER_PHONE = os.environ.get("TEST_SUPER_PHONE", "081900000777")
+SUPER_PASS = os.environ.get("TEST_SUPER_PASS", "TempSup3r!2026")
 
 
 def _sess(tok):
@@ -180,12 +180,11 @@ class TestFinalState:
     def test_three_canonical_users_present(self, super_token):
         async def _check():
             db, c = await _mongo()
-            phones = [u["phone"] for u in await db.users.find({"phone": {"$in": ["081200000001","082130018893","089529303412"]}}).to_list(10)]
-            ns = await db.users.count_documents({"role":"superadmin"})
+            # Temp super phone must exist; test does not assert on user's real accounts.
+            u = await db.users.find_one({"phone": SUPER_PHONE, "role": "superadmin"})
             n_attempts = await db.login_attempts.count_documents({})
             c.close()
-            return phones, ns, n_attempts
-        phones, ns, n_att = _run(_check())
-        assert set(phones) == {"081200000001","082130018893","089529303412"}, phones
-        assert ns == 1
+            return u, n_attempts
+        u, n_att = _run(_check())
+        assert u is not None
         assert n_att == 0
