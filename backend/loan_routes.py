@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 from core import (
     db, now_utc, iso, parse_dt, audit, get_settings, get_current_user, require_staff, require_lender,
-    require_borrower, ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_LENDER, ROLE_BORROWER,
+    require_borrower, require_roles, ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_LENDER, ROLE_BORROWER,
 )
 from notif import notify_admins, notify_all_lenders, notify_user, rp, id_datetime
 from storage import save_upload, get_object
@@ -551,6 +551,102 @@ async def reject_payment(payment_id: str, payload: RejectIn, request: Request, u
     await db.loans.update_one({"_id": loan["_id"]}, {"$set": {"status": new_status}})
     await LS.record_status(str(loan["_id"]), LS.S_WAITING_PAYMENT, new_status, user, f"Pembayaran ditolak: {payload.reason}")
     await audit(request, user, "PAYMENT_REJECTED", "payment", payment_id, f"Pembayaran {loan['loan_number']} ditolak: {payload.reason}")
+    return await LS.serialize_loan(await _get_loan_or_404(str(loan["_id"])), deep=True)
+
+
+class OverrideIn(BaseModel):
+    action: str
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.post("/payments/{payment_id}/override")
+async def override_payment(payment_id: str, payload: OverrideIn, request: Request, user: dict = Depends(require_roles(ROLE_SUPERADMIN))):
+    """EMERGENCY OVERRIDE — Superadmin only, outside the normal payment flow.
+    Normal verification remains exclusive to the lender who funded the loan."""
+    if payload.action not in ("verify", "reject"):
+        raise HTTPException(status_code=400, detail="Aksi override tidak valid")
+    payment = await db.payments.find_one({"_id": payment_id})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Pembayaran tidak ditemukan")
+    if payment["status"] != "PENDING":
+        raise HTTPException(status_code=409, detail="Pembayaran ini sudah diproses sebelumnya")
+    loan = await _get_loan_or_404(payment["loan_id"])
+    now = iso(now_utc())
+    if payload.action == "verify":
+        res = await db.payments.update_one(
+            {"_id": payment_id, "status": "PENDING"},
+            {
+                "$set": {
+                    "status": "VERIFIED",
+                    "verified_at": now,
+                    "verified_by": str(user["_id"]),
+                    "verified_by_name": f"{user.get('full_name')} (override Superadmin)",
+                    "override": True,
+                    "override_reason": payload.reason,
+                }
+            },
+        )
+        if res.modified_count == 0:
+            raise HTTPException(status_code=409, detail="Pembayaran ini sudah diproses sebelumnya")
+        await db.loans.update_one(
+            {"_id": loan["_id"]},
+            {
+                "$set": {
+                    "status": LS.S_PAID,
+                    "paid_at": now,
+                    "payment_verified_at": now,
+                    "payment_verified_by": str(user["_id"]),
+                    "actual_payment_amount": LS.money(payment["amount_paid"]),
+                    "late_days_final": payment.get("late_days_at_submission") or 0,
+                    "late_fee_final": LS.money(payment.get("late_fee_at_submission")),
+                    "override_by": str(user["_id"]),
+                    "override_reason": payload.reason,
+                }
+            },
+        )
+        await LS.record_status(str(loan["_id"]), loan["status"], LS.S_PAID, user, f"OVERRIDE SUPERADMIN: {payload.reason}")
+        await audit(
+            request, user, "SUPERADMIN_PAYMENT_OVERRIDE_VERIFY", "payment", payment_id,
+            f"Override Superadmin: pembayaran {loan['loan_number']} ditandai LUNAS. Alasan: {payload.reason}",
+            {"payment_status": "PENDING", "loan_status": loan["status"]},
+            {"payment_status": "VERIFIED", "loan_status": LS.S_PAID},
+        )
+        if loan.get("funded_by"):
+            await notify_user(
+                loan["funded_by"], "loan",
+                f"⚠️ <b>OVERRIDE SUPERADMIN</b>\n\n{loan['loan_number']} ditandai LUNAS oleh Superadmin.\nAlasan: {payload.reason}",
+                "SUPERADMIN_OVERRIDE", str(loan["_id"]),
+            )
+    else:
+        res = await db.payments.update_one(
+            {"_id": payment_id, "status": "PENDING"},
+            {
+                "$set": {
+                    "status": "REJECTED",
+                    "rejection_reason": f"[Override Superadmin] {payload.reason}",
+                    "verified_at": now,
+                    "verified_by": str(user["_id"]),
+                    "verified_by_name": f"{user.get('full_name')} (override Superadmin)",
+                    "override": True,
+                    "override_reason": payload.reason,
+                }
+            },
+        )
+        if res.modified_count == 0:
+            raise HTTPException(status_code=409, detail="Pembayaran ini sudah diproses sebelumnya")
+        due = parse_dt(loan.get("due_date"))
+        new_status = LS.S_OVERDUE if due and now_utc() > due else LS.S_ACTIVE
+        await db.loans.update_one(
+            {"_id": loan["_id"]},
+            {"$set": {"status": new_status, "override_by": str(user["_id"]), "override_reason": payload.reason}},
+        )
+        await LS.record_status(str(loan["_id"]), LS.S_WAITING_PAYMENT, new_status, user, f"OVERRIDE SUPERADMIN: {payload.reason}")
+        await audit(
+            request, user, "SUPERADMIN_PAYMENT_OVERRIDE_REJECT", "payment", payment_id,
+            f"Override Superadmin: laporan pembayaran {loan['loan_number']} ditolak. Alasan: {payload.reason}",
+            {"payment_status": "PENDING", "loan_status": loan["status"]},
+            {"payment_status": "REJECTED", "loan_status": new_status},
+        )
     return await LS.serialize_loan(await _get_loan_or_404(str(loan["_id"])), deep=True)
 
 

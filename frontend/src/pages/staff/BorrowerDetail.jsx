@@ -23,6 +23,7 @@ export default function BorrowerDetail() {
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [newStatus, setNewStatus] = useState("SUSPENDED");
+  const [tempPassword, setTempPassword] = useState(null);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["borrower", id],
@@ -84,6 +85,9 @@ export default function BorrowerDetail() {
             </Button>
             <Button data-testid="change-status-btn" variant="outline" className="rounded-full" onClick={() => setDialog("status")}>
               Ubah Status
+            </Button>
+            <Button data-testid="reset-borrower-password-btn" variant="outline" className="rounded-full" onClick={() => setDialog("reset")}>
+              Reset Password
             </Button>
           </>
         )}
@@ -347,7 +351,45 @@ export default function BorrowerDetail() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog open={false} onOpenChange={() => {}} title="" description="" onConfirm={() => {}} />
+      <ConfirmDialog
+        open={dialog === "reset"}
+        onOpenChange={() => setDialog(null)}
+        testId="reset-borrower-password-dialog"
+        title="Reset password Peminjam?"
+        description={`Sistem akan membuat password sementara untuk ${p.full_name}. Password lama tidak dapat dilihat siapa pun, dan Peminjam wajib membuat password baru saat login berikutnya. Tindakan ini tercatat pada Audit Log.`}
+        confirmLabel="Reset Password"
+        loading={busy}
+        onConfirm={async () => {
+          setBusy(true);
+          try {
+            const { data: res } = await api.post(`/users/${id}/reset-password`);
+            setTempPassword(res);
+            setDialog(null);
+            toast.success("Password direset");
+          } catch (err) {
+            toast.error(errMsg(err));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+
+      <Dialog open={!!tempPassword} onOpenChange={() => setTempPassword(null)}>
+        <DialogContent data-testid="borrower-temp-password-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Password Sementara</DialogTitle>
+            <DialogDescription>
+              Bagikan kepada {tempPassword?.full_name} ({tempPassword?.phone}) melalui kanal aman. Hanya ditampilkan sekali.
+            </DialogDescription>
+          </DialogHeader>
+          <p data-testid="borrower-temp-password-value" className="num rounded-xl border bg-muted px-4 py-4 text-center font-heading text-xl font-semibold tracking-widest">
+            {tempPassword?.temporary_password}
+          </p>
+          <DialogFooter>
+            <Button data-testid="borrower-temp-password-close-btn" onClick={() => setTempPassword(null)}>Selesai</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

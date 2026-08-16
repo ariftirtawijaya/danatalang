@@ -80,6 +80,22 @@ async def seed_superadmin():
         logger.info("superadmin password synced from env")
 
 
+async def normalize_existing_phones():
+    """Ensure every stored phone uses the single canonical format (0xxxxxxxxxx)."""
+    from core import normalize_phone
+
+    async for u in db.users.find({}, {"phone": 1}):
+        raw = u.get("phone")
+        canonical = normalize_phone(raw or "")
+        if canonical and canonical != raw:
+            clash = await db.users.find_one({"phone": canonical, "_id": {"$ne": u["_id"]}})
+            if clash:
+                logger.warning("phone normalization skipped for %s: %s already exists", u["_id"], canonical)
+                continue
+            await db.users.update_one({"_id": u["_id"]}, {"$set": {"phone": canonical}})
+            logger.info("normalized phone %s -> %s", raw, canonical)
+
+
 async def overdue_worker():
     while True:
         try:
@@ -93,6 +109,7 @@ async def overdue_worker():
 async def startup():
     await ensure_indexes()
     await get_settings()
+    await normalize_existing_phones()
     await seed_superadmin()
     try:
         await asyncio.to_thread(init_storage)

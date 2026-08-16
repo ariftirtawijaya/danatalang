@@ -81,12 +81,16 @@ def create_access_token(user_id: str, role: str) -> str:
 
 
 def normalize_phone(phone: str) -> str:
+    """Canonical Indonesian format: 08xxxxxxxxxx. Accepts 08.., 628.., +628.., 00628.., 8.."""
     p = "".join(ch for ch in (phone or "") if ch.isdigit() or ch == "+")
-    if p.startswith("+62"):
-        p = "0" + p[3:]
-    elif p.startswith("62") and not p.startswith("620"):
-        p = "0" + p[2:]
-    return p
+    p = p.lstrip("+")
+    if p.startswith("0062"):
+        p = p[4:]
+    elif p.startswith("62"):
+        p = p[2:]
+    elif p.startswith("0"):
+        p = p[1:]
+    return ("0" + p.lstrip("0")) if p else ""
 
 
 async def get_settings() -> dict:
@@ -133,12 +137,31 @@ async def _token_user(token: str) -> dict:
     return user
 
 
+PASSWORD_CHANGE_ALLOWED_PATHS = (
+    "/api/auth/me",
+    "/api/auth/password",
+    "/api/auth/logout",
+    "/api/public/settings",
+)
+
+
 async def get_current_user(request: Request) -> dict:
     auth = request.headers.get("Authorization", "")
     token = auth[7:] if auth.startswith("Bearer ") else request.query_params.get("auth")
     if not token:
         raise HTTPException(status_code=401, detail="Belum terautentikasi")
-    return await _token_user(token)
+    user = await _token_user(token)
+    if user.get("must_change_password") and request.url.path not in PASSWORD_CHANGE_ALLOWED_PATHS:
+        raise HTTPException(status_code=403, detail="Anda wajib membuat password baru sebelum melanjutkan")
+    return user
+
+
+def generate_temp_password() -> str:
+    import secrets
+    import string
+
+    alphabet = string.ascii_uppercase + string.digits
+    return "Pk" + "".join(secrets.choice(alphabet) for _ in range(8)) + "!"
 
 
 def require_roles(*roles):

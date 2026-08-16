@@ -34,6 +34,13 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - Dashboard 4 role, tabel search/filter/pagination, export CSV, audit log, laporan + performa Pendana
 - PWA: manifest, service worker (API tidak di-cache), offline fallback, icon 192/512, standalone
 
+## Iterasi 2 (16 Agustus 2026) — hardening pra manual test
+- **Object storage dikonfirmasi**: semua bukti pencairan & pembayaran di Emergent Managed Object Storage (`pinjamku/{kind}/{user_id}/{uuid}.{ext}`), nama file random, whitelist MIME (jpg/png/webp/pdf), maks 5MB, tanpa local disk. Akses hanya via `GET /api/files/{id}` yang terautentikasi (401 tanpa token, 403 untuk pihak tidak terkait, `Cache-Control: private, no-store`)
+- **Emergency Payment Override (Superadmin saja)**: `POST /api/payments/{id}/override` (`verify`/`reject`, alasan min 10 karakter), confirmation dialog di UI, audit log `SUPERADMIN_PAYMENT_OVERRIDE_VERIFY/REJECT` + loan_status_histories. Flow normal tidak berubah: verifikasi pembayaran tetap eksklusif Pendana pemilik loan, Admin tetap 403
+- **Normalisasi No HP**: canonical `08xxxxxxxxxx` untuk input `08..`, `62..`, `+62..`, `0062..`; migrasi data lama saat startup; unique index mencegah akun duplikat
+- **Reset password**: `POST /api/users/{id}/reset-password` menghasilkan temporary password sistem + `must_change_password=true` (Admin hanya boleh reset Peminjam, tidak boleh reset diri sendiri). Semua endpoint lain diblokir 403 sampai user membuat password baru di halaman wajib ganti password
+- Regresi + fitur baru: **70/70 tes backend lolos**; 4 flow UI baru terverifikasi
+
 ## Backlog
 - P1: Grafik tren pelunasan & aging overdue; notifikasi in-app
 - P1: Reset password mandiri (OTP/WA) untuk Peminjam

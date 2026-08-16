@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
+import ForcePassword from "@/pages/ForcePassword";
 import LoanDetail from "@/pages/LoanDetail";
 import Profile from "@/pages/Profile";
 import BorrowerHome from "@/pages/borrower/Home";
@@ -47,6 +48,7 @@ function Protected({ children }) {
 function RoleRoutes() {
   const { user, loading } = useAuth();
   if (loading) return <Splash />;
+  if (user?.must_change_password) return <ForcePassword />;
   const role = user?.role;
   if (role === "borrower")
     return (

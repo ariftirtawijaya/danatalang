@@ -8,8 +8,8 @@ from fastapi import APIRouter, HTTPException, Request, Depends, UploadFile, File
 from pydantic import BaseModel, Field, EmailStr
 from core import (
     db, now_utc, iso, parse_dt, audit, get_settings, public_settings, get_current_user, require_staff,
-    require_superadmin, sanitize_user, hash_password, normalize_phone, ROLE_SUPERADMIN, ROLE_ADMIN,
-    ROLE_LENDER, ROLE_BORROWER,
+    require_superadmin, sanitize_user, hash_password, normalize_phone, generate_temp_password,
+    ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_LENDER, ROLE_BORROWER,
 )
 from notif import _send_sync, rp
 from storage import save_upload
@@ -457,6 +457,29 @@ async def update_user(user_id: str, payload: UserUpdateIn, request: Request, use
         logged["password"] = "***reset***"
     await audit(request, user, "USER_UPDATED", "user", user_id, f"User {target.get('full_name')} diperbarui", None, logged)
     return sanitize_user(await db.users.find_one({"_id": user_id}))
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_password(user_id: str, request: Request, user: dict = Depends(require_staff)):
+    """Generate a system temporary password. Resetter never learns the old password and the
+    target user is forced to set a new one at next login."""
+    target = await db.users.find_one({"_id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    if user["role"] == ROLE_ADMIN and target.get("role") != ROLE_BORROWER:
+        raise HTTPException(status_code=403, detail="Admin hanya dapat mereset password Peminjam")
+    if str(target["_id"]) == str(user["_id"]):
+        raise HTTPException(status_code=400, detail="Gunakan menu Profil untuk mengubah password Anda sendiri")
+    temp = generate_temp_password()
+    await db.users.update_one(
+        {"_id": user_id}, {"$set": {"password_hash": hash_password(temp), "must_change_password": True}}
+    )
+    await audit(
+        request, user, "PASSWORD_RESET", "user", user_id,
+        f"Password {target.get('full_name')} direset. Pengguna wajib membuat password baru saat login.",
+        None, {"must_change_password": True},
+    )
+    return {"temporary_password": temp, "must_change_password": True, "full_name": target.get("full_name"), "phone": target.get("phone")}
 
 
 @router.get("/lenders/{lender_id}")

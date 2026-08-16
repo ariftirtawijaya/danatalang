@@ -369,6 +369,24 @@ export default function LoanDetail() {
             </div>
           </section>
 
+          {role === "superadmin" && loan.status === "WAITING_PAYMENT_VERIFICATION" && pendingPayment && (
+            <section className="rounded-2xl border border-destructive/40 bg-destructive/5 p-6" data-testid="superadmin-override-box">
+              <p className="font-heading text-sm font-semibold uppercase tracking-widest text-destructive">Emergency Override</p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Gunakan hanya pada kondisi luar biasa (misal Pendana tidak dapat dihubungi). Di luar alur pembayaran normal,
+                wajib beralasan, dan seluruh tindakan tercatat pada Audit Log.
+              </p>
+              <div className="mt-5 space-y-3">
+                <Button data-testid="override-verify-btn" variant="destructive" className="w-full rounded-full" onClick={() => setDialog("override-verify")}>
+                  Override: Tandai Lunas
+                </Button>
+                <Button data-testid="override-reject-btn" variant="outline" className="w-full rounded-full" onClick={() => setDialog("override-reject")}>
+                  Override: Tolak Pembayaran
+                </Button>
+              </div>
+            </section>
+          )}
+
           {loan.lender_bank && (role === "borrower" || isStaff) && ["ACTIVE", "OVERDUE", "WAITING_PAYMENT_VERIFICATION"].includes(loan.status) && (
             <section className="rounded-2xl border bg-primary p-6 text-primary-foreground card-soft" data-testid="payment-destination">
               <p className="text-[10px] uppercase tracking-widest text-primary-foreground/70">Transfer Pembayaran Ke</p>
@@ -431,6 +449,30 @@ export default function LoanDetail() {
         title="Tolak pengajuan pinjaman"
         loading={busy}
         onSubmit={(reason) => run(() => api.post(`/loans/${loan.id}/reject`, { reason }), "Pengajuan ditolak")}
+      />
+      <RejectDialog
+        open={dialog === "override-verify"}
+        onOpenChange={() => setDialog(null)}
+        testId="override-verify-dialog"
+        title="Override Superadmin — tandai LUNAS"
+        loading={busy}
+        onSubmit={(reason) =>
+          reason.trim().length < 10
+            ? toast.error("Alasan override minimal 10 karakter")
+            : run(() => api.post(`/payments/${pendingPayment.id}/override`, { action: "verify", reason }), "Override Superadmin: pinjaman ditandai LUNAS")
+        }
+      />
+      <RejectDialog
+        open={dialog === "override-reject"}
+        onOpenChange={() => setDialog(null)}
+        testId="override-reject-dialog"
+        title="Override Superadmin — tolak pembayaran"
+        loading={busy}
+        onSubmit={(reason) =>
+          reason.trim().length < 10
+            ? toast.error("Alasan override minimal 10 karakter")
+            : run(() => api.post(`/payments/${pendingPayment.id}/override`, { action: "reject", reason }), "Override Superadmin: laporan pembayaran ditolak")
+        }
       />
       <RejectDialog
         open={dialog === "reject-payment"}

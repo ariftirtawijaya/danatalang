@@ -157,6 +157,7 @@ async def logout(request: Request, user: dict = Depends(get_current_user)):
 @router.get("/me")
 async def me(user: dict = Depends(get_current_user)):
     out = sanitize_user(user)
+    out["must_change_password"] = bool(user.get("must_change_password"))
     if user["role"] == ROLE_BORROWER:
         out["credit"] = await borrower_credit(user)
     return out
@@ -205,6 +206,6 @@ class PasswordIn(BaseModel):
 async def change_password(payload: PasswordIn, request: Request, user: dict = Depends(get_current_user)):
     if not verify_password(payload.current_password, user.get("password_hash", "")):
         raise HTTPException(status_code=400, detail="Password saat ini salah")
-    await db.users.update_one({"_id": user["_id"]}, {"$set": {"password_hash": hash_password(payload.new_password)}})
+    await db.users.update_one({"_id": user["_id"]}, {"$set": {"password_hash": hash_password(payload.new_password), "must_change_password": False}})
     await audit(request, user, "PASSWORD_CHANGED", "user", str(user["_id"]), "Password diubah")
     return {"ok": True}

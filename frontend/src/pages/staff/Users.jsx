@@ -69,6 +69,23 @@ export default function Users() {
     }
   };
 
+  const [resetTarget, setResetTarget] = useState(null);
+  const [tempPassword, setTempPassword] = useState(null);
+
+  const doReset = async () => {
+    setBusy(true);
+    try {
+      const { data: res } = await api.post(`/users/${resetTarget.id}/reset-password`);
+      setTempPassword(res);
+      setResetTarget(null);
+      toast.success("Password direset. Bagikan password sementara ini secara aman.");
+    } catch (err) {
+      toast.error(errMsg(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleActive = async (u) => {
     try {
       await api.put(`/users/${u.id}`, { is_active: !u.is_active });
@@ -167,6 +184,9 @@ export default function Users() {
                         >
                           Edit
                         </Button>
+                        <Button size="sm" variant="ghost" className="rounded-full" data-testid={`reset-password-${u.id}`} onClick={() => setResetTarget(u)}>
+                          Reset Password
+                        </Button>
                         <Button size="sm" variant="ghost" className="rounded-full" data-testid={`toggle-user-${u.id}`} onClick={() => toggleActive(u)}>
                           {u.is_active ? "Nonaktifkan" : "Aktifkan"}
                         </Button>
@@ -181,6 +201,41 @@ export default function Users() {
       ) : (
         <EmptyState testId="empty-users" title={`Belum ada ${title}`} description={isSuper ? `Tambahkan ${title} baru untuk mulai.` : ""} />
       )}
+
+      <Dialog open={!!resetTarget} onOpenChange={() => setResetTarget(null)}>
+        <DialogContent data-testid="reset-password-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Reset password pengguna?</DialogTitle>
+            <DialogDescription>
+              Sistem akan membuat password sementara untuk {resetTarget?.full_name}. Password lama tidak dapat dilihat siapa pun, dan
+              pengguna wajib membuat password baru saat login berikutnya. Tindakan ini tercatat pada Audit Log.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setResetTarget(null)} disabled={busy}>Batal</Button>
+            <Button data-testid="reset-password-confirm-btn" onClick={doReset} disabled={busy}>
+              {busy ? "Memproses..." : "Reset Password"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!tempPassword} onOpenChange={() => setTempPassword(null)}>
+        <DialogContent data-testid="temp-password-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Password Sementara</DialogTitle>
+            <DialogDescription>
+              Bagikan kepada {tempPassword?.full_name} ({tempPassword?.phone}) melalui kanal aman. Password ini hanya ditampilkan sekali.
+            </DialogDescription>
+          </DialogHeader>
+          <p data-testid="temp-password-value" className="num rounded-xl border bg-muted px-4 py-4 text-center font-heading text-xl font-semibold tracking-widest">
+            {tempPassword?.temporary_password}
+          </p>
+          <DialogFooter>
+            <Button data-testid="temp-password-close-btn" onClick={() => setTempPassword(null)}>Selesai</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialog === "form"} onOpenChange={() => setDialog(null)}>
         <DialogContent data-testid="user-form-dialog" className="max-h-[92vh] overflow-y-auto">
