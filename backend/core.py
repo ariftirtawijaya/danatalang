@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import HTTPException, Request, Depends
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 
 logger = logging.getLogger("app")
 
@@ -94,10 +95,14 @@ def normalize_phone(phone: str) -> str:
 
 
 async def get_settings() -> dict:
-    doc = await db.settings.find_one({"_id": "app"})
-    if not doc:
-        await db.settings.insert_one(dict(DEFAULT_SETTINGS))
-        return dict(DEFAULT_SETTINGS)
+    """Race-safe: atomic upsert, aman bila beberapa proses start bersamaan."""
+    defaults = {k: v for k, v in DEFAULT_SETTINGS.items() if k != "_id"}
+    doc = await db.settings.find_one_and_update(
+        {"_id": "app"},
+        {"$setOnInsert": defaults},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
     merged = dict(DEFAULT_SETTINGS)
     merged.update(doc)
     return merged

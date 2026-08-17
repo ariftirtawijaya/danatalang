@@ -18,6 +18,7 @@ import auth_routes
 import loan_routes
 import admin_routes
 from storage import init_storage, s3_required
+from pymongo.errors import DuplicateKeyError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("app")
@@ -64,21 +65,26 @@ async def seed_superadmin():
     if await db.users.find_one({"phone": phone}):
         logger.warning("phone %s already used by a non-superadmin account; skipping seed", phone)
         return
-    await db.users.insert_one(
-        {
-            "_id": str(uuid.uuid4()),
-            "role": ROLE_SUPERADMIN,
-            "full_name": os.environ.get("SUPERADMIN_NAME", "Super Admin"),
-            "phone": phone,
-            "email": os.environ.get("SUPERADMIN_EMAIL", "superadmin@local.app").lower(),
-            "password_hash": hash_password(password),
-            "is_active": True,
-            "notify_telegram": True,
-            "telegram_chat_id": None,
-            "created_at": iso(now_utc()),
-            "last_login_at": None,
-        }
-    )
+    try:
+        await db.users.insert_one(
+            {
+                "_id": str(uuid.uuid4()),
+                "role": ROLE_SUPERADMIN,
+                "full_name": os.environ.get("SUPERADMIN_NAME", "Super Admin"),
+                "phone": phone,
+                "email": os.environ.get("SUPERADMIN_EMAIL", "superadmin@local.app").lower(),
+                "password_hash": hash_password(password),
+                "is_active": True,
+                "notify_telegram": True,
+                "telegram_chat_id": None,
+                "created_at": iso(now_utc()),
+                "last_login_at": None,
+            }
+        )
+    except DuplicateKeyError:
+        # Proses lain sudah melakukan seed lebih dulu (startup bersamaan) — aman diabaikan.
+        logger.info("superadmin already seeded by another process")
+        return
     logger.info("superadmin seeded")
 
 

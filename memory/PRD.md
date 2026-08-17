@@ -93,3 +93,8 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - `REQUIRE_S3=true`: startup gagal bila konfigurasi S3 tidak lengkap atau head_bucket gagal, tanpa fallback local storage
 - Default `S3_PREFIX` diganti ke `danatalang`
 - DEPLOYMENT.md: Bagian 1 (varian VPS host Nginx + Atlas + R2) dan Bagian 2 (portable)
+
+## Update 2026-08-17 — Startup race-safe
+- `core.get_settings()`: atomic upsert (`$setOnInsert` + `upsert=True`, `ReturnDocument.AFTER`) — tidak lagi insert manual
+- `server.seed_superadmin()`: insert dibungkus try/except `DuplicateKeyError` (unique index `phone`) → idempotent pada startup bersamaan
+- `backend/Dockerfile`: uvicorn `--workers 1` (overdue_worker in-process, hindari eksekusi ganda)
