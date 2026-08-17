@@ -1,6 +1,10 @@
 services:
+  # MongoDB lokal = OPSIONAL (development / VPS tanpa Atlas).
+  # Jalankan dengan: docker compose --profile localdb up -d
+  # Produksi disarankan memakai MongoDB Atlas lewat MONGO_URL (mongodb+srv://...).
   mongo:
     image: mongo:7
+    profiles: ["localdb"]
     container_name: danatalang-mongo
     restart: unless-stopped
     command: ["--bind_ip", "0.0.0.0"]
@@ -12,10 +16,9 @@ services:
     build: ./backend
     container_name: danatalang-api
     restart: unless-stopped
-    depends_on:
-      - mongo
     environment:
       MONGO_URL: ${MONGO_URL}
+      REQUIRE_S3: ${REQUIRE_S3:-}
       DB_NAME: ${DB_NAME}
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -29,7 +32,7 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}
       S3_REGION: ${S3_REGION:-auto}
-      S3_PREFIX: ${S3_PREFIX:-pinjamku}
+      S3_PREFIX: ${S3_PREFIX:-danatalang}
 
   web:
     build:

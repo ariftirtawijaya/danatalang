@@ -11,6 +11,99 @@ Stack: **React (CRA)** + **FastAPI** + **MongoDB**. Panduan ini memakai Docker C
 
 ---
 
+---
+
+# BAGIAN 1 — VARIAN VPS: Nginx host (SSL sudah ada) + MongoDB Atlas + Cloudflare R2
+
+Gunakan bagian ini bila VPS Anda **sudah menjalankan Nginx host + Certbot/Let's Encrypt** untuk
+`danatalang.id`. Berkas yang dipakai: **`docker-compose.vps.yml`** (bukan `docker-compose.yml`).
+
+Karakteristik varian VPS:
+- Container **tidak** bind ke port 80/443. Frontend hanya `127.0.0.1:8080:80`.
+- FastAPI hanya di jaringan internal Docker (tidak ada `ports:`), diakses via Nginx container `web`.
+- **Tidak ada container MongoDB** → produksi memakai **MongoDB Atlas** (`mongodb+srv://...`).
+- **Tidak ada container Certbot** → SSL dikelola Certbot host.
+- `REQUIRE_S3=true` → aplikasi **gagal start** bila S3/R2 tidak lengkap atau bucket tidak bisa diakses
+  (mencegah bukti transfer tersimpan di filesystem container).
+
+## V1. `.env.prod` untuk varian VPS
+```bash
+cat > /opt/danatalang/.env.prod <<'EOF'
+DOMAIN=danatalang.id
+MONGO_URL=mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
+DB_NAME=danatalang
+JWT_SECRET=GANTI_DENGAN_HASIL_openssl_rand_hex_32
+CORS_ORIGINS=https://danatalang.id
+SUPERADMIN_NAME=Super Admin
+SUPERADMIN_PHONE=08123456789
+SUPERADMIN_EMAIL=admin@danatalang.id
+SUPERADMIN_PASSWORD=PasswordKuatAnda!2026
+REQUIRE_S3=true
+S3_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+S3_ACCESS_KEY_ID=r2_access_key_anda
+S3_SECRET_ACCESS_KEY=r2_secret_key_anda
+S3_BUCKET_NAME=danatalang-bukti
+S3_REGION=auto
+S3_PREFIX=danatalang
+EOF
+chmod 600 /opt/danatalang/.env.prod
+```
+MongoDB Atlas: **Network Access → Add IP Address** = IP publik VPS (jangan `0.0.0.0/0`), dan buat user
+database khusus. Password yang mengandung karakter spesial harus di-URL-encode.
+
+## V2. Jalankan container
+```bash
+cd /opt/danatalang
+docker compose -f docker-compose.vps.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.vps.yml ps
+curl -s http://127.0.0.1:8080/api/health     # harus {"status":"ok"}
+docker compose -f docker-compose.vps.yml logs api | grep "object storage"
+# harus: object storage ready: s3 bucket danatalang-bukti (REQUIRE_S3)
+```
+Bila S3 salah/tidak lengkap, container `api` akan **exit** dengan pesan
+`REQUIRE_S3=true tetapi ...` — itu perilaku yang diharapkan (fail fast).
+
+## V3. Konfigurasi Nginx host
+Contoh siap pakai: **`deploy/nginx.host.danatalang.conf`**.
+```bash
+cp /opt/danatalang/deploy/nginx.host.danatalang.conf /etc/nginx/sites-available/danatalang.id
+ln -sf /etc/nginx/sites-available/danatalang.id /etc/nginx/sites-enabled/danatalang.id
+nginx -t && systemctl reload nginx
+```
+Bila sertifikat belum ada: `certbot --nginx -d danatalang.id -d www.danatalang.id`
+(Certbot host tetap yang mengelola perpanjangan otomatis — `systemctl status certbot.timer`).
+
+Inti reverse proxy host:
+```
+location / { proxy_pass http://127.0.0.1:8080; }
+client_max_body_size 8m;   # penting: upload bukti transfer sampai 5MB
+```
+`/api/` tidak perlu blok terpisah di host — Nginx di dalam container `web` sudah meneruskannya ke `api:8001`.
+
+## V4. Firewall
+```bash
+ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
+# Port 8080 TIDAK dibuka: sudah dibind ke 127.0.0.1 saja.
+# Port 27017 tidak relevan (tidak ada Mongo lokal).
+```
+
+## V5. Update & operasional (varian VPS)
+```bash
+cd /opt/danatalang && git pull
+docker compose -f docker-compose.vps.yml --env-file .env.prod up -d --build
+docker compose -f docker-compose.vps.yml logs -f api
+```
+Backup: memakai snapshot/backup otomatis **MongoDB Atlas** (bagian G di bawah hanya untuk Mongo container).
+
+---
+
+# BAGIAN 2 — VARIAN PORTABLE (Docker mengelola Nginx + Certbot sendiri)
+
+Gunakan `docker-compose.yml` bila VPS **belum** punya Nginx host.
+MongoDB container kini **opsional**: jalankan dengan `--profile localdb`
+(`docker compose --env-file .env.prod --profile localdb up -d --build`) dan set
+`MONGO_URL=mongodb://mongo:27017`. Tanpa profil tersebut, isi `MONGO_URL` dengan URI Atlas.
+
 ## A. Persiapan VPS
 - Ubuntu 22.04/24.04, minimal 2 vCPU / 2 GB RAM / 20 GB disk
 - Domain sudah diarahkan ke IP VPS (A record `@` dan `www`)
@@ -48,7 +141,8 @@ S3_ACCESS_KEY_ID=r2_access_key_anda
 S3_SECRET_ACCESS_KEY=r2_secret_key_anda
 S3_BUCKET_NAME=danatalang-bukti
 S3_REGION=auto
-S3_PREFIX=pinjamku
+S3_PREFIX=danatalang
+REQUIRE_S3=true
 EOF
 chmod 600 /opt/danatalang/.env.prod
 openssl rand -hex 32   # tempel hasilnya ke JWT_SECRET
@@ -145,7 +239,8 @@ Untuk Admin/Pendana/Peminjam: Superadmin → **Pengguna → Reset Password** (pa
 - [ ] `JWT_SECRET` acak 32 byte, `SUPERADMIN_PASSWORD` kuat, `.env.prod` mode 600
 - [ ] `CORS_ORIGINS` hanya domain Anda (bukan `*`)
 - [ ] HTTPS aktif dan HTTP redirect ke HTTPS
-- [ ] Port 27017 (MongoDB) **tidak** dibuka ke internet (default compose: internal saja)
+- [ ] Port 27017 (MongoDB) **tidak** dibuka ke internet (compose: internal saja / Atlas dengan IP allowlist)
+- [ ] Varian VPS: `REQUIRE_S3=true` aktif dan container `web` hanya bind ke `127.0.0.1:8080`
 - [ ] Backup harian aktif dan sudah diuji restore
 - [ ] Bucket S3 **private**, kredensial R2 hanya ada di `.env.prod` (bukan di repo/frontend)
 - [ ] Log backend menampilkan `object storage ready: s3 bucket ...`
@@ -165,7 +260,8 @@ Untuk Admin/Pendana/Peminjam: Superadmin → **Pengguna → Reset Password** (pa
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | ya | kredensial bucket, **hanya di backend** |
 | `S3_BUCKET_NAME` | ya | nama bucket **private** |
 | `S3_REGION` | tidak | `auto` untuk R2, region asli untuk AWS |
-| `S3_PREFIX` | tidak | prefix object, default `pinjamku` |
+| `S3_PREFIX` | tidak | prefix object, default `danatalang` |
+| `REQUIRE_S3` | tidak | `true` (wajib di produksi) = startup gagal bila S3 tidak lengkap / bucket tidak bisa diakses; tanpa fallback local storage |
 | `REACT_APP_BACKEND_URL` | build | dikirim otomatis oleh compose (`https://$DOMAIN`) |
 
 ## Catatan storage

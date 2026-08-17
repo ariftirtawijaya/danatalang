@@ -17,7 +17,7 @@ import loan_service as LS
 import auth_routes
 import loan_routes
 import admin_routes
-from storage import init_storage
+from storage import init_storage, s3_required
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("app")
@@ -143,6 +143,9 @@ async def startup():
     try:
         await asyncio.to_thread(init_storage)
     except Exception as e:
+        if s3_required():
+            logger.error("storage init failed (REQUIRE_S3=true): %s", e)
+            raise
         logger.warning("storage init failed: %s", e)
     asyncio.create_task(overdue_worker())
 

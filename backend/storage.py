@@ -22,7 +22,7 @@ from fastapi import HTTPException, UploadFile
 
 logger = logging.getLogger("app")
 
-APP_PREFIX = (os.environ.get("S3_PREFIX") or "pinjamku").strip("/")
+APP_PREFIX = (os.environ.get("S3_PREFIX") or "danatalang").strip("/")
 LOCAL_ROOT = Path(os.environ.get("LOCAL_STORAGE_DIR") or (Path(__file__).parent / ".storage"))
 
 ALLOWED_MIME = {
@@ -34,6 +34,10 @@ ALLOWED_MIME = {
 MAX_SIZE = 5 * 1024 * 1024
 
 _client = None
+
+
+def s3_required() -> bool:
+    return (os.environ.get("REQUIRE_S3") or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def s3_configured() -> bool:
@@ -65,10 +69,30 @@ def get_client():
 
 
 def init_storage(force: bool = False):
-    """Validate connectivity at boot. Never raises for the local fallback."""
+    """Validate connectivity at boot.
+
+    REQUIRE_S3=true (produksi): S3 wajib lengkap & bucket harus dapat diakses, jika tidak → raise
+    (startup gagal). Tidak ada fallback ke local storage.
+    """
     global _client
     if force:
         _client = None
+    if s3_required():
+        missing = [
+            k
+            for k in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET_NAME")
+            if not os.environ.get(k)
+        ]
+        if missing:
+            raise RuntimeError(
+                "REQUIRE_S3=true tetapi konfigurasi S3 tidak lengkap: " + ", ".join(missing)
+            )
+        try:
+            get_client().head_bucket(Bucket=bucket())
+        except Exception as e:
+            raise RuntimeError(f"REQUIRE_S3=true tetapi bucket S3 '{bucket()}' tidak dapat diakses: {e}")
+        logger.info("object storage ready: s3 bucket %s (REQUIRE_S3)", bucket())
+        return "s3"
     if not s3_configured():
         LOCAL_ROOT.mkdir(parents=True, exist_ok=True)
         os.chmod(LOCAL_ROOT, 0o700)

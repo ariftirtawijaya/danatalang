@@ -85,3 +85,11 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 2. Buat Admin + Pendana produksi via menu Pengguna
 3. Set bunga & denda global di Pengaturan → Pinjaman
 4. Ganti `SUPERADMIN_PASSWORD` & `JWT_SECRET` di `backend/.env` untuk produksi
+
+## Update 2026-08-17 — Deployment varian VPS (existing host Nginx)
+- `docker-compose.vps.yml`: tanpa Mongo & Certbot container, web bind 127.0.0.1:8080, api internal-only
+- `deploy/nginx.internal.conf` (nginx dalam container, no SSL) & `deploy/nginx.host.danatalang.conf` (contoh vhost host + Certbot)
+- Mongo container di `docker-compose.yml` jadi opsional (profile `localdb`); produksi pakai MongoDB Atlas (mongodb+srv)
+- `REQUIRE_S3=true`: startup gagal bila konfigurasi S3 tidak lengkap atau head_bucket gagal, tanpa fallback local storage
+- Default `S3_PREFIX` diganti ke `danatalang`
+- DEPLOYMENT.md: Bagian 1 (varian VPS host Nginx + Atlas + R2) dan Bagian 2 (portable)
