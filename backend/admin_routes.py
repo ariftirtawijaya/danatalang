@@ -559,7 +559,10 @@ async def branding_file(file_id: str):
     rec = await db.files.find_one({"_id": file_id, "is_deleted": False, "kind": "branding"})
     if not rec:
         raise HTTPException(status_code=404, detail="File tidak ditemukan")
-    data, ct = get_object(rec["storage_path"])
+    try:
+        data, ct = await asyncio.to_thread(get_object, rec["storage_path"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan pada penyimpanan")
     return Response(content=data, media_type=rec.get("content_type") or ct, headers={"Cache-Control": "public, max-age=3600"})
 
 
@@ -660,7 +663,7 @@ async def factory_reset_preview(user: dict = Depends(require_superadmin)):
         "counters": await db.counters.count_documents({}),
     }
     try:
-        objects = await asyncio.to_thread(list_objects, "pinjamku/")
+        objects = await asyncio.to_thread(list_objects, None)
         counts["storage_objects"] = len(objects)
         counts["storage_bytes"] = sum(o.get("size", 0) for o in objects)
     except Exception:
@@ -699,11 +702,11 @@ async def factory_reset(payload: FactoryResetIn, request: Request, user: dict = 
 
     keeper = await _primary_superadmin()
     before = await factory_reset_preview(user)
-    storage_result = {"purged": 0, "failed": 0, "remaining_bytes": 0}
+    storage_result = {"purged": 0, "failed": 0, "remaining_objects": 0, "remaining_bytes": 0}
     success = False
     try:
         try:
-            storage_result = await asyncio.to_thread(purge_prefix, "pinjamku/")
+            storage_result = await asyncio.to_thread(purge_prefix, None)
         except Exception as e:
             storage_result = {"purged": 0, "failed": -1, "error": str(e)}
         for name in set(WIPE_COLLECTIONS):
@@ -712,7 +715,11 @@ async def factory_reset(payload: FactoryResetIn, request: Request, user: dict = 
         await db.settings.delete_many({})
         await db.settings.insert_one(dict(DEFAULT_SETTINGS))
         await db.users.update_one({"_id": keeper["_id"]}, {"$unset": {"must_change_password": ""}})
-        success = storage_result.get("failed", 0) <= 0 and (storage_result.get("remaining_bytes") or 0) == 0
+        success = (
+            storage_result.get("failed", 0) <= 0
+            and (storage_result.get("remaining_objects") or 0) == 0
+            and (storage_result.get("remaining_bytes") or 0) == 0
+        )
         await audit(
             request, keeper, "SYSTEM_FACTORY_RESET", "system", "app",
             f"Factory reset dijalankan oleh {keeper.get('full_name')}. Status: {'BERHASIL' if success else 'SELESAI DENGAN PERINGATAN'}. "

@@ -1,4 +1,5 @@
 import uuid
+import asyncio
 from datetime import timedelta
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Depends, UploadFile, File, Form, Query, Response
@@ -661,7 +662,9 @@ async def download_file(file_id: str, user: dict = Depends(get_current_user)):
         if not allowed:
             raise HTTPException(status_code=403, detail="Tidak memiliki akses ke file ini")
     try:
-        data, content_type = get_object(rec["storage_path"])
+        data, content_type = await asyncio.to_thread(get_object, rec["storage_path"])
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan pada penyimpanan")
     except Exception:
         raise HTTPException(status_code=502, detail="Gagal mengambil file")
     return Response(

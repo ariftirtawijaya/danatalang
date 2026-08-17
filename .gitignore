@@ -91,3 +91,5 @@ frontend/node_modules/.cache/default-development/0.pack
 credentials.json
 *.key
 .credentials
+.storage
+.env.prod
