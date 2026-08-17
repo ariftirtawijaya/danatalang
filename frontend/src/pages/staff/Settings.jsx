@@ -26,6 +26,45 @@ export default function Settings() {
   const [general, setGeneral] = useState({ app_name: "", app_description: "" });
   const [loan, setLoan] = useState({ interest_rate: "", late_fee_rate_per_day: "" });
   const [tg, setTg] = useState({ telegram_reg_enabled: false, telegram_loan_enabled: false, telegram_reg_token: "", telegram_loan_token: "" });
+  const [ps, setPs] = useState({ lender_pct: "60", admin_pct: "25", platform_pct: "15" });
+  const [acc, setAcc] = useState({
+    settlement_account_type: "", settlement_account_number: "", settlement_account_holder: "",
+    settlement_account_bank_name: "", settlement_instructions: "",
+  });
+  const psTotal = Number(
+    (Number(ps.lender_pct || 0) + Number(ps.admin_pct || 0) + Number(ps.platform_pct || 0)).toFixed(2)
+  );
+
+  const { data: psData } = useQuery({
+    queryKey: ["profit-sharing-settings"],
+    queryFn: async () => (await api.get("/settings/profit-sharing")).data,
+    enabled: isSuper,
+  });
+  const { data: accData } = useQuery({
+    queryKey: ["settlement-account-settings"],
+    queryFn: async () => (await api.get("/settings/settlement-account")).data,
+    enabled: isSuper,
+  });
+
+  useEffect(() => {
+    if (psData)
+      setPs({
+        lender_pct: String(psData.lender_pct ?? "60"),
+        admin_pct: String(psData.admin_pct ?? "25"),
+        platform_pct: String(psData.platform_pct ?? "15"),
+      });
+  }, [psData]);
+
+  useEffect(() => {
+    if (accData)
+      setAcc({
+        settlement_account_type: accData.settlement_account_type || "",
+        settlement_account_number: accData.settlement_account_number || "",
+        settlement_account_holder: accData.settlement_account_holder || "",
+        settlement_account_bank_name: accData.settlement_account_bank_name || "",
+        settlement_instructions: accData.settlement_instructions || "",
+      });
+  }, [accData]);
 
   useEffect(() => {
     if (data) {
@@ -66,6 +105,7 @@ export default function Settings() {
           <TabsTrigger value="umum" data-testid="settings-tab-general">Umum</TabsTrigger>
           <TabsTrigger value="pinjaman" data-testid="settings-tab-loan">Pinjaman</TabsTrigger>
           <TabsTrigger value="telegram" data-testid="settings-tab-telegram">Telegram</TabsTrigger>
+          {isSuper && <TabsTrigger value="bagihasil" data-testid="settings-tab-profit">Bagi Hasil</TabsTrigger>}
           {isSuper && <TabsTrigger value="sistem" data-testid="settings-tab-system">Sistem</TabsTrigger>}
         </TabsList>
 
@@ -222,6 +262,86 @@ export default function Settings() {
               <EmptyState testId="empty-notif-log" title="Belum ada notifikasi terkirim" />
             )}
           </section>
+        </TabsContent>
+
+        <TabsContent value="bagihasil">
+          {isSuper && (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <section className="rounded-2xl border bg-card p-6 card-soft">
+                <p className="mb-5 font-heading text-sm font-semibold uppercase tracking-widest text-muted-foreground">Persentase Pembagian Hasil</p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Pendana (%)</Label>
+                    <Input data-testid="ps-lender-input" inputMode="decimal" value={ps.lender_pct} onChange={(e) => setPs((p) => ({ ...p, lender_pct: e.target.value }))} className="h-11 rounded-xl num" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Admin (%)</Label>
+                    <Input data-testid="ps-admin-input" inputMode="decimal" value={ps.admin_pct} onChange={(e) => setPs((p) => ({ ...p, admin_pct: e.target.value }))} className="h-11 rounded-xl num" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Aplikator (%)</Label>
+                    <Input data-testid="ps-platform-input" inputMode="decimal" value={ps.platform_pct} onChange={(e) => setPs((p) => ({ ...p, platform_pct: e.target.value }))} className="h-11 rounded-xl num" />
+                  </div>
+                  <p data-testid="ps-total" className={`text-xs ${psTotal === 100 ? "text-muted-foreground" : "text-destructive"}`}>
+                    Total: {psTotal}% {psTotal === 100 ? "(valid)" : "— harus tepat 100%"}
+                  </p>
+                  <div className="flex gap-3 rounded-xl bg-amber-50 p-4 dark:bg-amber-500/10">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    <p className="text-xs text-muted-foreground">
+                      Pokok pinjaman 100% hak Pendana. Pembagian hanya berlaku atas profit terealisasi (bunga + denda).
+                      Pinjaman yang sudah disetujui tetap memakai snapshot persentase saat approval.
+                    </p>
+                  </div>
+                  <Button
+                    data-testid="save-profit-sharing-btn"
+                    className="rounded-full"
+                    disabled={busy === "ps" || psTotal !== 100}
+                    onClick={() =>
+                      run("ps", () => api.put("/settings/profit-sharing", {
+                        lender_pct: Number(ps.lender_pct), admin_pct: Number(ps.admin_pct), platform_pct: Number(ps.platform_pct),
+                      }), "Persentase bagi hasil disimpan")
+                    }
+                  >
+                    {busy === "ps" ? "Menyimpan..." : "Simpan"}
+                  </Button>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border bg-card p-6 card-soft">
+                <p className="mb-5 font-heading text-sm font-semibold uppercase tracking-widest text-muted-foreground">Rekening Settlement Pusat</p>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Jenis / Bank (mis. BCA)</Label>
+                    <Input data-testid="sa-type-input" value={acc.settlement_account_type} onChange={(e) => setAcc((a) => ({ ...a, settlement_account_type: e.target.value }))} className="h-11 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nomor Rekening</Label>
+                    <Input data-testid="sa-number-input" value={acc.settlement_account_number} onChange={(e) => setAcc((a) => ({ ...a, settlement_account_number: e.target.value }))} className="h-11 rounded-xl num" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Atas Nama</Label>
+                    <Input data-testid="sa-holder-input" value={acc.settlement_account_holder} onChange={(e) => setAcc((a) => ({ ...a, settlement_account_holder: e.target.value }))} className="h-11 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nama Bank Lengkap (opsional)</Label>
+                    <Input data-testid="sa-bank-input" value={acc.settlement_account_bank_name} onChange={(e) => setAcc((a) => ({ ...a, settlement_account_bank_name: e.target.value }))} className="h-11 rounded-xl" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Instruksi Setoran (opsional)</Label>
+                    <Textarea data-testid="sa-instructions-input" rows={3} value={acc.settlement_instructions} onChange={(e) => setAcc((a) => ({ ...a, settlement_instructions: e.target.value }))} />
+                  </div>
+                  <Button
+                    data-testid="save-settlement-account-btn"
+                    className="rounded-full"
+                    disabled={busy === "acc"}
+                    onClick={() => run("acc", () => api.put("/settings/settlement-account", acc), "Rekening settlement disimpan")}
+                  >
+                    {busy === "acc" ? "Menyimpan..." : "Simpan"}
+                  </Button>
+                </div>
+              </section>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="sistem">

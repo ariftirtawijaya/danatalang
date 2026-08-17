@@ -17,6 +17,7 @@ import loan_service as LS
 import auth_routes
 import loan_routes
 import admin_routes
+import profit_routes
 from storage import init_storage, s3_required
 from pymongo.errors import DuplicateKeyError
 
@@ -28,6 +29,7 @@ app = FastAPI(title="Loan Management API")
 app.include_router(auth_routes.router)
 app.include_router(loan_routes.router)
 app.include_router(admin_routes.router)
+app.include_router(profit_routes.router)
 
 app.add_middleware(
     CORSMiddleware,

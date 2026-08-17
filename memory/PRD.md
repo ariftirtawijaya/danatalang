@@ -98,3 +98,27 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - `core.get_settings()`: atomic upsert (`$setOnInsert` + `upsert=True`, `ReturnDocument.AFTER`) — tidak lagi insert manual
 - `server.seed_superadmin()`: insert dibungkus try/except `DuplicateKeyError` (unique index `phone`) → idempotent pada startup bersamaan
 - `backend/Dockerfile`: uvicorn `--workers 1` (overdue_worker in-process, hindari eksekusi ganda)
+
+## Update 2026-08-17 — MODUL PEMBAGIAN HASIL (PROFIT SHARING) + SETTLEMENT
+
+### Konsep
+- Pokok 100% hak Pendana. Profit pool = bunga terealisasi + denda terealisasi (frozen dari payment attempt yang diverifikasi).
+- Default 60/25/15 (lender_share / admin_share / platform_share = Pendana / Admin / Aplikator), global setting Superadmin, total wajib 100%, di-SNAPSHOT ke loan saat approval.
+- Distribusi HANYA dibuat saat loan menjadi PAID; idempotent via unique index profit_distributions.loan_id.
+- Alur uang V1: Pendana menerima seluruh pembayaran, lalu wajib setor (admin_profit + platform_profit) ke rekening settlement pusat. Superadmin verify/reject. Setelah SETTLED, payout Admin PENDING -> Superadmin mark PAID + bukti.
+- Rounding: Decimal ROUND_HALF_UP untuk lender & admin, platform = sisa (total selalu = profit_pool).
+
+### File baru
+- backend/profit_service.py, backend/profit_routes.py, backend/tests/test_iter16_profit_sharing.py
+- frontend/src/components/profit.jsx, pages/staff/ProfitSharing.jsx, pages/staff/MyEarnings.jsx, pages/lender/Settlement.jsx
+
+### File diubah
+- backend/core.py (DEFAULT_SETTINGS profit_share_*/settlement_account_*, 6 index profit_distributions)
+- backend/loan_routes.py (approve snapshot + assigned_admin_id, guard PAID, hook distribusi pada verify & override, RBAC file settlement/payout, PUT /loans/{id}/assigned-admin, POST /loans/{id}/profit-share/backfill, section profit_share di detail, None-guard borrower_credit)
+- backend/admin_routes.py (Factory Reset: wipe profit_distributions + hitungan bukti settlement/payout)
+- backend/server.py (include profit_routes)
+- frontend: App.js (route /profit-sharing, /earnings, /settlement), Layout.jsx (nav), LoanDetail.jsx (section Pembagian Hasil + dialog pilih/ubah Admin), staff/Settings.jsx (tab Bagi Hasil), lib/status.js (label audit baru)
+
+### Status testing
+- Backend pytest: 16/16 lulus (settings, snapshot, assignment, kalkulasi, rounding, freeze denda, double-verify, RBAC, settlement, reject, payout, file RBAC, legacy, reversal, index).
+- Regresi lama: 55/55 lulus. Frontend E2E iteration_16.json: 0 bug UI.

@@ -36,6 +36,14 @@ DEFAULT_SETTINGS = {
     "telegram_reg_token": None,
     "telegram_loan_enabled": False,
     "telegram_loan_token": None,
+    "profit_share_lender_pct": 60.0,
+    "profit_share_admin_pct": 25.0,
+    "profit_share_platform_pct": 15.0,
+    "settlement_account_type": None,
+    "settlement_account_number": None,
+    "settlement_account_holder": None,
+    "settlement_account_bank_name": None,
+    "settlement_instructions": None,
 }
 
 
@@ -227,3 +235,9 @@ async def ensure_indexes():
     await db.audit_logs.create_index("created_at")
     await db.login_attempts.create_index("identifier")
     await db.notifications.create_index("created_at")
+    await db.profit_distributions.create_index("loan_id", unique=True)
+    await db.profit_distributions.create_index("lender_id")
+    await db.profit_distributions.create_index("assigned_admin_id")
+    await db.profit_distributions.create_index("created_at")
+    await db.profit_distributions.create_index("lender_settlement_status")
+    await db.profit_distributions.create_index("admin_payout_status")

@@ -8,7 +8,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import {
   LayoutDashboard, Users, Wallet, FileText, ScrollText, Settings as SettingsIcon, Menu, LogOut,
-  Home, PlusCircle, ClipboardList, History, User, HandCoins, BadgeCheck, Receipt, BarChart3,
+  Home, PlusCircle, ClipboardList, History, User, HandCoins, BadgeCheck, Receipt, BarChart3, PiggyBank,
 } from "lucide-react";
 
 const staffNav = (role) => [
@@ -41,6 +41,9 @@ const staffNav = (role) => [
     section: "Lainnya",
     items: [
       { to: "/payments", label: "Pembayaran", icon: Receipt },
+      ...(role === "superadmin"
+        ? [{ to: "/profit-sharing", label: "Bagi Hasil", icon: PiggyBank }]
+        : [{ to: "/earnings", label: "Penghasilan", icon: PiggyBank }]),
       { to: "/reports", label: "Laporan", icon: BarChart3 },
       ...(role === "superadmin"
         ? [
@@ -65,6 +68,7 @@ const lenderNav = [
   { to: "/available", label: "Didanai", icon: HandCoins },
   { to: "/funding", label: "Pendanaan", icon: Wallet },
   { to: "/payments", label: "Bayar", icon: Receipt },
+  { to: "/settlement", label: "Bagi Hasil", icon: PiggyBank },
   { to: "/profile", label: "Profil", icon: User },
 ];
 

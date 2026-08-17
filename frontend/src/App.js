@@ -25,6 +25,9 @@ import StaffUsers from "@/pages/staff/Users";
 import StaffAudit from "@/pages/staff/AuditLog";
 import StaffSettings from "@/pages/staff/Settings";
 import StaffReports from "@/pages/staff/Reports";
+import StaffProfitSharing from "@/pages/staff/ProfitSharing";
+import StaffMyEarnings from "@/pages/staff/MyEarnings";
+import LenderSettlement from "@/pages/lender/Settlement";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const Splash = () => (
@@ -69,6 +72,7 @@ function RoleRoutes() {
         <Route path="/available" element={<Protected><LenderAvailable /></Protected>} />
         <Route path="/funding" element={<Protected><LenderFunding /></Protected>} />
         <Route path="/payments" element={<Protected><LenderPayments /></Protected>} />
+        <Route path="/settlement" element={<Protected><LenderSettlement /></Protected>} />
         <Route path="/profile" element={<Protected><Profile /></Protected>} />
         <Route path="/loans/:id" element={<Protected><LoanDetail /></Protected>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -85,6 +89,8 @@ function RoleRoutes() {
         <Route path="/payments" element={<Protected><StaffPayments /></Protected>} />
         <Route path="/users" element={<Protected><StaffUsers /></Protected>} />
         <Route path="/reports" element={<Protected><StaffReports /></Protected>} />
+        <Route path="/earnings" element={role === "admin" ? <Protected><StaffMyEarnings /></Protected> : <Navigate to="/profit-sharing" replace />} />
+        <Route path="/profit-sharing" element={role === "superadmin" ? <Protected><StaffProfitSharing /></Protected> : <Navigate to="/earnings" replace />} />
         <Route path="/audit-logs" element={role === "superadmin" ? <Protected><StaffAudit /></Protected> : <Navigate to="/dashboard" replace />} />
         <Route path="/settings" element={role === "superadmin" ? <Protected><StaffSettings /></Protected> : <Navigate to="/dashboard" replace />} />
         <Route path="/profile" element={<Protected><Profile /></Protected>} />

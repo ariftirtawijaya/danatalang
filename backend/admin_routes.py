@@ -630,7 +630,7 @@ async def test_telegram(payload: TestTelegramIn, user: dict = Depends(require_su
 # ---------------- audit & notifications ----------------
 WIPE_COLLECTIONS = [
     "loans", "loan_status_histories", "disbursements", "payments", "notifications",
-    "admin_notes", "audit_logs", "files", "counters", "login_attempts",
+    "admin_notes", "audit_logs", "files", "counters", "login_attempts", "profit_distributions",
 ]
 
 
@@ -660,6 +660,9 @@ async def factory_reset_preview(user: dict = Depends(require_superadmin)):
         "admin_notes": await db.admin_notes.count_documents({}),
         "audit_logs": await db.audit_logs.count_documents({}),
         "files": await db.files.count_documents({}),
+        "profit_distributions": await db.profit_distributions.count_documents({}),
+        "settlement_proofs": await db.files.count_documents({"kind": "settlement"}),
+        "admin_payout_proofs": await db.files.count_documents({"kind": "admin_payout"}),
         "counters": await db.counters.count_documents({}),
     }
     try:

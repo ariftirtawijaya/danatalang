@@ -11,6 +11,7 @@ from core import (
 from notif import notify_admins, notify_all_lenders, notify_user, rp, id_datetime
 from storage import save_upload, get_object
 import loan_service as LS
+import profit_service as PS
 
 router = APIRouter(prefix="/api", tags=["loans"])
 
@@ -169,21 +170,121 @@ async def get_loan(loan_id: str, user: dict = Depends(get_current_user)):
     out = await LS.serialize_loan(loan, deep=True)
     if user["role"] in (ROLE_SUPERADMIN, ROLE_ADMIN):
         borrower = await db.users.find_one({"_id": loan["borrower_id"]})
-        out["borrower_credit"] = await LS.borrower_credit(borrower)
+        out["borrower_credit"] = await LS.borrower_credit(borrower) if borrower else None
     if user["role"] == ROLE_BORROWER:
         out.pop("borrower_nik", None)
     if user["role"] == ROLE_LENDER and loan.get("funded_by") != str(user["_id"]):
         out.pop("borrower_bank", None)
         out.pop("borrower_nik", None)
+    if user["role"] != ROLE_BORROWER:
+        assigned_admin = (
+            await db.users.find_one({"_id": loan.get("assigned_admin_id")}) if loan.get("assigned_admin_id") else None
+        )
+        section = {
+            "has_snapshot": PS.loan_has_snapshot(loan),
+            "lender_pct": loan.get("profit_share_lender_pct_snapshot"),
+            "admin_pct": loan.get("profit_share_admin_pct_snapshot"),
+            "platform_pct": loan.get("profit_share_platform_pct_snapshot"),
+            "assigned_admin_id": loan.get("assigned_admin_id"),
+            "assigned_admin_name": (assigned_admin or {}).get("full_name"),
+            "legacy": bool(loan.get("profit_share_legacy")),
+            "distribution": None,
+        }
+        dist = await db.profit_distributions.find_one({"loan_id": loan_id})
+        if dist:
+            try:
+                PS.assert_can_read(dist, user)
+                section["distribution"] = await PS.serialize_distribution(dist)
+            except HTTPException:
+                section["distribution"] = None
+        out["profit_share"] = section
     return out
+
+
+class AssignedAdminIn(BaseModel):
+    admin_id: str
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.put("/loans/{loan_id}/assigned-admin")
+async def change_assigned_admin(loan_id: str, payload: AssignedAdminIn, request: Request,
+                                user: dict = Depends(require_roles(ROLE_SUPERADMIN))):
+    loan = await _get_loan_or_404(loan_id)
+    if loan.get("status") == LS.S_PAID:
+        raise HTTPException(
+            status_code=409,
+            detail="Pinjaman sudah LUNAS. Koreksi hanya melalui mekanisme reversal pembagian hasil.",
+        )
+    admin = await db.users.find_one({"_id": payload.admin_id, "role": ROLE_ADMIN, "is_active": True})
+    if not admin:
+        raise HTTPException(status_code=400, detail="Admin penanggung jawab tidak ditemukan atau tidak aktif")
+    old_admin_id = loan.get("assigned_admin_id")
+    await db.loans.update_one({"_id": loan_id}, {"$set": {"assigned_admin_id": str(admin["_id"])}})
+    await audit(
+        request, user, "LOAN_ASSIGNED_ADMIN_CHANGED", "loan", loan_id,
+        f"Admin penanggung jawab {loan['loan_number']} diubah menjadi {admin.get('full_name')}. Alasan: {payload.reason}",
+        {"old_admin_id": old_admin_id},
+        {"new_admin_id": str(admin["_id"]), "actor_id": str(user["_id"]), "reason": payload.reason,
+         "timestamp": iso(now_utc())},
+    )
+    return await get_loan(loan_id, user)
+
+
+class BackfillIn(BaseModel):
+    admin_id: str
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.post("/loans/{loan_id}/profit-share/backfill")
+async def backfill_profit_share(loan_id: str, payload: BackfillIn, request: Request,
+                                user: dict = Depends(require_roles(ROLE_SUPERADMIN))):
+    """Migrasi satu kali untuk pinjaman lama (sudah disetujui sebelum fitur bagi hasil, belum LUNAS)."""
+    loan = await _get_loan_or_404(loan_id)
+    if loan.get("status") in (LS.S_PAID, LS.S_REJECTED, LS.S_CANCELLED):
+        raise HTTPException(status_code=409, detail="Pinjaman ini sudah selesai, migrasi bagi hasil tidak diizinkan")
+    if PS.loan_has_snapshot(loan) and loan.get("assigned_admin_id"):
+        raise HTTPException(status_code=409, detail="Pinjaman ini sudah memiliki snapshot bagi hasil")
+    admin = await db.users.find_one({"_id": payload.admin_id, "role": ROLE_ADMIN, "is_active": True})
+    if not admin:
+        raise HTTPException(status_code=400, detail="Admin penanggung jawab tidak ditemukan atau tidak aktif")
+    snapshot = await PS.snapshot_percentages()
+    await db.loans.update_one(
+        {"_id": loan_id},
+        {
+            "$set": {
+                "assigned_admin_id": str(admin["_id"]),
+                "profit_share_lender_pct_snapshot": snapshot["lender_pct"],
+                "profit_share_admin_pct_snapshot": snapshot["admin_pct"],
+                "profit_share_platform_pct_snapshot": snapshot["platform_pct"],
+                "profit_share_version": 1,
+                "profit_share_migrated": True,
+                "profit_share_migrated_at": iso(now_utc()),
+            }
+        },
+    )
+    await audit(
+        request, user, "LOAN_PROFIT_SHARE_SNAPSHOTTED", "loan", loan_id,
+        f"MIGRASI bagi hasil {loan['loan_number']} memakai persentase global saat ini "
+        f"({snapshot['lender_pct']}/{snapshot['admin_pct']}/{snapshot['platform_pct']}), "
+        f"Admin penanggung jawab {admin.get('full_name')}. Alasan: {payload.reason}",
+        {"has_snapshot": PS.loan_has_snapshot(loan), "assigned_admin_id": loan.get("assigned_admin_id")},
+        {**snapshot, "assigned_admin_id": str(admin["_id"]), "migration": True, "reason": payload.reason},
+    )
+    return await get_loan(loan_id, user)
 
 
 class RejectIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class ApproveIn(BaseModel):
+    assigned_admin_id: Optional[str] = None
+
+
 @router.post("/loans/{loan_id}/approve")
-async def approve_loan(loan_id: str, request: Request, user: dict = Depends(require_staff)):
+async def approve_loan(loan_id: str, request: Request, payload: Optional[ApproveIn] = None, user: dict = Depends(require_staff)):
+    snapshot = await PS.snapshot_percentages()
+    assigned_admin_id = await PS.resolve_assigned_admin(user, (payload.assigned_admin_id if payload else None))
     res = await db.loans.update_one(
         {"_id": loan_id, "status": LS.S_WAITING_ADMIN},
         {
@@ -192,6 +293,11 @@ async def approve_loan(loan_id: str, request: Request, user: dict = Depends(requ
                 "approved_by": str(user["_id"]),
                 "approved_by_name": user.get("full_name"),
                 "approved_at": iso(now_utc()),
+                "assigned_admin_id": assigned_admin_id,
+                "profit_share_lender_pct_snapshot": snapshot["lender_pct"],
+                "profit_share_admin_pct_snapshot": snapshot["admin_pct"],
+                "profit_share_platform_pct_snapshot": snapshot["platform_pct"],
+                "profit_share_version": 1,
             }
         },
     )
@@ -200,6 +306,13 @@ async def approve_loan(loan_id: str, request: Request, user: dict = Depends(requ
     loan = await _get_loan_or_404(loan_id)
     await LS.record_status(loan_id, LS.S_WAITING_ADMIN, LS.S_WAITING_FUNDING, user, "Pengajuan disetujui")
     await audit(request, user, "LOAN_APPROVED", "loan", loan_id, f"Pinjaman {loan['loan_number']} disetujui")
+    assigned_admin = await db.users.find_one({"_id": assigned_admin_id})
+    await audit(
+        request, user, "LOAN_PROFIT_SHARE_SNAPSHOTTED", "loan", loan_id,
+        f"Snapshot bagi hasil {loan['loan_number']}: Pendana {snapshot['lender_pct']}%, Admin {snapshot['admin_pct']}%, "
+        f"Aplikator {snapshot['platform_pct']}%. Admin penanggung jawab: {(assigned_admin or {}).get('full_name')}",
+        None, {**snapshot, "assigned_admin_id": assigned_admin_id},
+    )
     borrower = await db.users.find_one({"_id": loan["borrower_id"]})
     text = (
         "💵 <b>PINJAMAN SIAP DIDANAI</b>\n\n"
@@ -487,6 +600,7 @@ async def verify_payment(payment_id: str, request: Request, user: dict = Depends
         raise HTTPException(status_code=404, detail="Pembayaran tidak ditemukan")
     if payment.get("lender_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Hanya Pendana pemilik pinjaman ini yang dapat memverifikasi")
+    await PS.assert_ready_for_paid(await _get_loan_or_404(payment["loan_id"]))
     res = await db.payments.update_one(
         {"_id": payment_id, "status": "PENDING"},
         {
@@ -501,6 +615,7 @@ async def verify_payment(payment_id: str, request: Request, user: dict = Depends
     if res.modified_count == 0:
         raise HTTPException(status_code=409, detail="Pembayaran ini sudah diverifikasi sebelumnya")
     loan = await _get_loan_or_404(payment["loan_id"])
+    await PS.assert_ready_for_paid(loan)
     await db.loans.update_one(
         {"_id": loan["_id"]},
         {
@@ -522,6 +637,7 @@ async def verify_payment(payment_id: str, request: Request, user: dict = Depends
         f"🎉 <b>PINJAMAN LUNAS</b>\n\n{loan['loan_number']}\nNominal: {rp(payment['amount_paid'])}\nDiverifikasi: {user.get('full_name')}",
         "LOAN_PAID", str(loan["_id"]),
     )
+    await PS.ensure_profit_distribution_for_paid_loan(await _get_loan_or_404(str(loan["_id"])), payment, user, request)
     return await LS.serialize_loan(await _get_loan_or_404(str(loan["_id"])), deep=True)
 
 
@@ -574,6 +690,7 @@ async def override_payment(payment_id: str, payload: OverrideIn, request: Reques
     loan = await _get_loan_or_404(payment["loan_id"])
     now = iso(now_utc())
     if payload.action == "verify":
+        await PS.assert_ready_for_paid(loan)
         res = await db.payments.update_one(
             {"_id": payment_id, "status": "PENDING"},
             {
@@ -618,6 +735,7 @@ async def override_payment(payment_id: str, payload: OverrideIn, request: Reques
                 f"⚠️ <b>OVERRIDE SUPERADMIN</b>\n\n{loan['loan_number']} ditandai LUNAS oleh Superadmin.\nAlasan: {payload.reason}",
                 "SUPERADMIN_OVERRIDE", str(loan["_id"]),
             )
+        await PS.ensure_profit_distribution_for_paid_loan(await _get_loan_or_404(str(loan["_id"])), payment, user, request)
     else:
         res = await db.payments.update_one(
             {"_id": payment_id, "status": "PENDING"},
@@ -656,7 +774,13 @@ async def download_file(file_id: str, user: dict = Depends(get_current_user)):
     rec = await db.files.find_one({"_id": file_id, "is_deleted": False})
     if not rec:
         raise HTTPException(status_code=404, detail="File tidak ditemukan")
-    if user["role"] not in (ROLE_SUPERADMIN, ROLE_ADMIN) and rec.get("uploaded_by") != str(user["_id"]):
+    if rec.get("kind") in ("settlement", "admin_payout"):
+        dist = await db.profit_distributions.find_one({"_id": rec.get("profit_distribution_id")})
+        if user["role"] != ROLE_SUPERADMIN and rec.get("uploaded_by") != str(user["_id"]):
+            allowed = dist and user["role"] == ROLE_ADMIN and dist.get("assigned_admin_id") == str(user["_id"])
+            if not allowed:
+                raise HTTPException(status_code=403, detail="Tidak memiliki akses ke file ini")
+    elif user["role"] not in (ROLE_SUPERADMIN, ROLE_ADMIN) and rec.get("uploaded_by") != str(user["_id"]):
         loan = await db.loans.find_one({"_id": rec.get("loan_id")}) if rec.get("loan_id") else None
         allowed = loan and (loan["borrower_id"] == str(user["_id"]) or loan.get("funded_by") == str(user["_id"]))
         if not allowed:

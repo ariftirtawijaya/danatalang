@@ -61,6 +61,16 @@ export const ACTION_LABELS = {
   SETTINGS_BRANDING_UPDATED: "Logo/Icon Diubah",
   SETTINGS_LOAN_UPDATED: "Bunga & Denda Diubah",
   SETTINGS_TELEGRAM_UPDATED: "Pengaturan Telegram Diubah",
+  PROFIT_SHARE_SETTINGS_UPDATED: "Persentase Bagi Hasil Diubah",
+  SETTLEMENT_ACCOUNT_UPDATED: "Rekening Settlement Diubah",
+  LOAN_PROFIT_SHARE_SNAPSHOTTED: "Snapshot Bagi Hasil Pinjaman",
+  LOAN_ASSIGNED_ADMIN_CHANGED: "Admin Penanggung Jawab Diubah",
+  PROFIT_DISTRIBUTION_CREATED: "Pembagian Hasil Dibuat",
+  LENDER_SETTLEMENT_SUBMITTED: "Setoran Bagi Hasil Dilaporkan",
+  LENDER_SETTLEMENT_VERIFIED: "Setoran Bagi Hasil Diverifikasi",
+  LENDER_SETTLEMENT_REJECTED: "Setoran Bagi Hasil Ditolak",
+  ADMIN_PAYOUT_MARKED_PAID: "Payout Admin Ditandai Dibayar",
+  PROFIT_DISTRIBUTION_REVERSED: "Pembagian Hasil Dibatalkan",
   SYSTEM_FACTORY_RESET: "Factory Reset Sistem",
 };
 
@@ -76,6 +86,7 @@ export const ENTITY_LABELS = {
   user: "Pengguna",
   loan: "Pinjaman",
   payment: "Pembayaran",
+  profit_distribution: "Pembagian Hasil",
   settings: "Pengaturan",
   system: "Sistem",
 };

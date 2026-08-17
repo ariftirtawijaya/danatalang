@@ -6,6 +6,8 @@ import { api, errMsg } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { rupiah, formatDate, formatDateTime, formatThousand, onlyDigits, maskNik } from "@/lib/format";
 import { StatusBadge, Field, ConfirmDialog, ProofImage, LoadingRows, PageHeader } from "@/components/common";
+import { ShareBadge, ShareBreakdown } from "@/components/profit";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { statusLabel } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -113,11 +115,21 @@ export default function LoanDetail() {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState(null);
+  const [adminId, setAdminId] = useState("");
+  const [assignReason, setAssignReason] = useState("");
 
   const { data: loan, isLoading, refetch } = useQuery({
     queryKey: ["loan", id],
     queryFn: async () => (await api.get(`/loans/${id}`)).data,
   });
+
+  const isStaffRoleUnused = false;
+  const { data: admins } = useQuery({
+    queryKey: ["active-admins"],
+    queryFn: async () => (await api.get("/users", { params: { role: "admin", page_size: 100 } })).data,
+    enabled: user?.role === "superadmin",
+  });
+  const activeAdmins = (admins?.items || []).filter((a) => a.is_active !== false);
 
   const role = user?.role;
   const isStaff = role === "admin" || role === "superadmin";
@@ -291,6 +303,52 @@ export default function LoanDetail() {
             </section>
           )}
 
+          {loan.profit_share && (
+            <section className="rounded-2xl border bg-card p-6 card-soft" data-testid="loan-profit-share">
+              <p className="font-heading text-sm font-semibold uppercase tracking-widest text-muted-foreground">Pembagian Hasil</p>
+              {loan.profit_share.has_snapshot ? (
+                <>
+                  <div className="mt-5 grid grid-cols-2 gap-5 sm:grid-cols-4">
+                    <Field label="Pendana" value={`${loan.profit_share.lender_pct}%`} />
+                    <Field label="Admin" value={`${loan.profit_share.admin_pct}%`} />
+                    <Field label="Aplikator" value={`${loan.profit_share.platform_pct}%`} />
+                    <Field label="Admin Penanggung Jawab" value={loan.profit_share.assigned_admin_name || "Belum ditetapkan"} />
+                  </div>
+                  {loan.profit_share.distribution ? (
+                    <div className="mt-5 space-y-4">
+                      <ShareBreakdown d={loan.profit_share.distribution} testId="loan-share-breakdown" />
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-xs text-muted-foreground">Status Setoran Pendana:</span>
+                        <ShareBadge value={loan.profit_share.distribution.lender_settlement_status} />
+                        <span className="text-xs text-muted-foreground">Payout Admin:</span>
+                        <ShareBadge value={loan.profit_share.distribution.admin_payout_status} map="payout" />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-4 text-xs text-muted-foreground">
+                      Pembagian hasil dihitung setelah pinjaman dinyatakan LUNAS.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="mt-4 text-xs text-muted-foreground" data-testid="loan-profit-share-legacy">
+                  Pinjaman ini belum memiliki snapshot bagi hasil (data lama). Superadmin dapat melengkapi melalui migrasi
+                  sebelum pinjaman dilunasi.
+                </p>
+              )}
+              {role === "superadmin" && loan.status !== "PAID" && (
+                <Button
+                  data-testid="change-assigned-admin-btn"
+                  variant="outline"
+                  className="mt-5 rounded-full"
+                  onClick={() => setDialog("assign-admin")}
+                >
+                  {loan.profit_share.has_snapshot ? "Ubah Admin Penanggung Jawab" : "Lengkapi Bagi Hasil (Migrasi)"}
+                </Button>
+              )}
+            </section>
+          )}
+
           {loan.timeline?.length > 0 && (
             <section className="rounded-2xl border bg-card p-6 card-soft" data-testid="loan-timeline">
               <p className="font-heading text-sm font-semibold uppercase tracking-widest text-muted-foreground">Timeline Aktivitas</p>
@@ -411,8 +469,91 @@ export default function LoanDetail() {
         description={`Yakin ingin menyetujui pinjaman ${loan.loan_number} sebesar ${rupiah(loan.principal_amount)}? Pinjaman akan ditawarkan kepada Pendana.`}
         confirmLabel="Ya, Setujui"
         loading={busy}
-        onConfirm={() => run(() => api.post(`/loans/${loan.id}/approve`), "Pengajuan disetujui")}
+        onConfirm={() =>
+          role === "superadmin"
+            ? setDialog("approve-superadmin")
+            : run(() => api.post(`/loans/${loan.id}/approve`), "Pengajuan disetujui")
+        }
       />
+
+      <Dialog open={dialog === "approve-superadmin"} onOpenChange={() => setDialog(null)}>
+        <DialogContent data-testid="approve-superadmin-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Pilih Admin Penanggung Jawab</DialogTitle>
+            <DialogDescription>
+              Superadmin wajib menetapkan Admin yang berhak atas bagian Admin dari pembagian hasil pinjaman ini.
+            </DialogDescription>
+          </DialogHeader>
+          <Select value={adminId} onValueChange={setAdminId}>
+            <SelectTrigger data-testid="assigned-admin-select" className="h-11 rounded-xl">
+              <SelectValue placeholder="Pilih Admin aktif" />
+            </SelectTrigger>
+            <SelectContent>
+              {activeAdmins.map((a) => (
+                <SelectItem key={a.id} value={a.id} data-testid={`admin-option-${a.id}`}>
+                  {a.full_name} · {a.phone}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialog(null)} disabled={busy}>Batal</Button>
+            <Button
+              data-testid="approve-with-admin-btn"
+              disabled={busy || !adminId}
+              onClick={() => run(() => api.post(`/loans/${loan.id}/approve`, { assigned_admin_id: adminId }), "Pengajuan disetujui")}
+            >
+              {busy ? "Memproses..." : "Setujui Pengajuan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === "assign-admin"} onOpenChange={() => setDialog(null)}>
+        <DialogContent data-testid="assign-admin-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Admin Penanggung Jawab</DialogTitle>
+            <DialogDescription>Perubahan tercatat pada Audit Log. Alasan minimal 10 karakter.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Select value={adminId} onValueChange={setAdminId}>
+              <SelectTrigger data-testid="assign-admin-select" className="h-11 rounded-xl">
+                <SelectValue placeholder="Pilih Admin aktif" />
+              </SelectTrigger>
+              <SelectContent>
+                {activeAdmins.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>{a.full_name} · {a.phone}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Textarea
+              data-testid="assign-admin-reason"
+              rows={3}
+              value={assignReason}
+              onChange={(e) => setAssignReason(e.target.value)}
+              placeholder="Alasan perubahan / migrasi..."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialog(null)} disabled={busy}>Batal</Button>
+            <Button
+              data-testid="assign-admin-submit-btn"
+              disabled={busy || !adminId || assignReason.trim().length < 10}
+              onClick={() =>
+                run(
+                  () =>
+                    loan.profit_share?.has_snapshot
+                      ? api.put(`/loans/${loan.id}/assigned-admin`, { admin_id: adminId, reason: assignReason })
+                      : api.post(`/loans/${loan.id}/profit-share/backfill`, { admin_id: adminId, reason: assignReason }),
+                  "Admin penanggung jawab diperbarui"
+                )
+              }
+            >
+              {busy ? "Memproses..." : "Simpan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={dialog === "claim"}
         onOpenChange={() => setDialog(null)}
