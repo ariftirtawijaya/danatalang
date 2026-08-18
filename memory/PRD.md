@@ -168,3 +168,19 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - Status loan baru PAYMENT_COLLECTED (masuk CLOSED_STATUSES sehingga limit/outstanding/active count peminjam langsung pulih, denda beku).
 - File baru: backend/collection_service.py, backend/collection_routes.py, frontend staff/Collections.jsx, lender/AdminRemittance.jsx, tests/test_iter19_admin_collection.py.
 - Test: iter19 17/17; regresi iter16 16, iter17+18 21, iter4+flow 55, iter2/6/8/10/15 66 (1 skip).
+
+## Update 2026-06 (iterasi 20) — CRASH-SAFETY ADMIN COLLECTION & REMITTANCE
+Prinsip: **TRANSACTION jika tersedia + IDEMPOTENT RECOVERY sebagai safety net** (tidak bergantung replica set).
+- `collection_service.transaction_supported()` mendeteksi kapabilitas nyata (mencoba transaction sungguhan lalu abort), hasil di-cache; `atomic(op)` menjalankan op dalam transaction bila didukung, fallback tanpa session (op ditulis idempoten). Pod preview = MongoDB standalone → memakai jalur fallback.
+- Collect: payment ditulis lebih dulu dengan `commit_state=PENDING`, lalu loan → PAYMENT_COLLECTED, lalu `commit_state=COMMITTED`. Item PENDING/ABORTED disembunyikan dari daftar & summary (`visible_collection_filter`). `recover_pending_collections()` melanjutkan (forward) bila loan masih ACTIVE/OVERDUE/COLLECTED, atau meng-ABORT + REVERSED bila loan tak valid.
+- Bulk prepare: lifecycle PREPARING → PREPARED. Parent remittance dibuat lebih dulu (status PREPARING + `reservation_token` + `requested_ids`), lalu reservasi item, lalu `finish_prepare()`. Tidak pernah ada item RESERVED tanpa parent recoverable.
+- `recover_stale_reservations()` hanya menyentuh yang benar-benar stale/orphan: PREPARING melewati lease 120 detik (lanjut ke PREPARED bila seluruh requested_ids ter-reserve, selain itu dilepas + CANCELLED) dan item RESERVED yang parent-nya hilang/CANCELLED. Reservasi PREPARED valid tidak pernah dilepas. Dipicu sebelum prepare baru, saat halaman koleksi/setoran dibuka Admin, dan lewat tombol Superadmin.
+- Endpoint baru: `POST /api/admin-remittances/{id}/cancel` (Admin pemilik + Superadmin, hanya PREPARED tanpa attempt/proof, reason ≥5 karakter, item kembali COLLECTED, record CANCELLED immutable) dan `POST /api/admin-remittances/recover-stale` (Superadmin).
+- `/finalize` diperketat: hanya state VERIFYING (VERIFIED → idempotent 200), tidak bisa melewati verifikasi Pendana; unauth 401, Admin/Peminjam/Pendana lain 403. `POST /verify` milik Pendana otomatis melanjutkan state VERIFYING yang macet.
+- UI: tombol Superadmin "Bersihkan Reservasi Terlantar" (`recover-stale-btn`), tombol "Batalkan Setoran" + dialog (`cancel-rem-btn-<id>`, `cancel-rem-dialog`, `cancel-rem-reason`, `cancel-rem-confirm`), label status "Dibatalkan" dan tab Riwayat memuat CANCELLED.
+- Test: tests/test_iter20_crash_safety.py 14/14 (failure-injection collect & bulk prepare, orphan release, guard PREPARED tidak dilepas, RBAC cancel/recover/finalize). Regresi: iter19 17, iter18 13, iter16+17 24, iter4 7 — semua hijau. UI smoke 4 role desktop+mobile 390px: tidak ada bug (test_reports/iteration_17.json).
+
+### Backlog (belum dikerjakan)
+- P1: seed skenario demo end-to-end agar UI live test bisa klik Buat Setoran Bulk/Kirim Bukti/Verifikasi dengan akun QA.
+- P1: konfirmasi apakah rekening Pendana pada loan detail jalur pembayaran langsung perlu disembunyikan dari Peminjam.
+- P0 (menunggu user): push GitHub & deploy — DITAHAN sesuai instruksi user.

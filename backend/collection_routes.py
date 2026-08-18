@@ -64,26 +64,13 @@ async def collect_payment(
         raise HTTPException(status_code=409, detail="Pinjaman ini tidak dalam status dapat menerima pembayaran")
     if await db.payments.find_one({"loan_id": loan_id, "status": "PENDING"}):
         raise HTTPException(status_code=409, detail="Ada laporan pembayaran langsung ke Pendana yang masih menunggu verifikasi")
+    await CS.recover_pending_collections(user, request)
     if await db.payments.find_one({"loan_id": loan_id, "payment_channel": CS.CH_ADMIN,
                                    "collection_status": {"$nin": [CS.COL_REVERSED]}}):
         raise HTTPException(status_code=409, detail="Pembayaran pinjaman ini sudah diterima Admin sebelumnya")
 
     at = now_utc()
     snap = CS.snapshot_amounts(loan, at)
-    # Conditional atomic update: hanya satu request boleh memindahkan status.
-    res = await db.loans.update_one(
-        {"_id": loan_id, "status": {"$in": [LS.S_ACTIVE, LS.S_OVERDUE]}},
-        {"$set": {
-            "status": LS.S_COLLECTED,
-            "collected_at": iso(at),
-            "collected_by": str(user["_id"]),
-            "late_days_final": snap["late_days_snapshot"],
-            "late_fee_final": snap["late_fee_snapshot"],
-            "actual_payment_amount": snap["total_collected"],
-        }},
-    )
-    if res.modified_count == 0:
-        raise HTTPException(status_code=409, detail="Pembayaran pinjaman ini sudah diproses")
 
     upload = None
     if proof is not None and getattr(proof, "filename", None):
@@ -114,9 +101,37 @@ async def collect_payment(
         "proof_file_id": (upload or {}).get("file_id"),
         "collected_at": iso(at),
         "created_at": iso(at),
+        "commit_state": CS.COMMIT_PENDING,
         **snap,
     }
-    await db.payments.insert_one(doc)
+
+    async def _op(session):
+        # 1) payment dulu (PENDING) supaya tidak pernah ada loan COLLECTED tanpa record pembayaran
+        if not await db.payments.find_one({"_id": payment_id}, session=session):
+            await db.payments.insert_one(doc, session=session)
+        res = await db.loans.update_one(
+            {"_id": loan_id, "status": {"$in": [LS.S_ACTIVE, LS.S_OVERDUE]}},
+            {"$set": {
+                "status": LS.S_COLLECTED,
+                "collected_at": iso(at),
+                "collected_by": str(user["_id"]),
+                "late_days_final": snap["late_days_snapshot"],
+                "late_fee_final": snap["late_fee_snapshot"],
+                "actual_payment_amount": snap["total_collected"],
+            }}, session=session,
+        )
+        if res.modified_count == 0:
+            raise HTTPException(status_code=409, detail="Pembayaran pinjaman ini sudah diproses")
+        await db.payments.update_one({"_id": payment_id}, {"$set": {"commit_state": CS.COMMIT_DONE}}, session=session)
+
+    try:
+        await CS.atomic(_op)
+    except Exception:
+        # bersihkan jejak PENDING agar pinjaman tidak terkunci; recovery tetap jadi safety net
+        await db.payments.delete_one({"_id": payment_id, "commit_state": CS.COMMIT_PENDING})
+        if upload:
+            await _discard_upload(upload["file_id"])
+        raise
     if upload:
         await db.files.update_one({"_id": upload["file_id"]}, {"$set": {"loan_id": loan_id, "payment_id": payment_id}})
     await LS.record_status(loan_id, loan["status"], LS.S_COLLECTED, user,
@@ -140,7 +155,7 @@ async def collect_payment(
 
 # ---------------- collections ----------------
 def _collection_query(user: dict) -> dict:
-    q = {"payment_channel": CS.CH_ADMIN, "collection_status": {"$ne": CS.COL_REVERSED}}
+    q = CS.visible_collection_filter()
     if user["role"] == ROLE_ADMIN:
         q["collector_admin_id"] = str(user["_id"])
     elif user["role"] == ROLE_LENDER:
@@ -172,6 +187,9 @@ async def list_collections(
     unremitted_only: bool = False,
     page_size: int = 100,
 ):
+    if user["role"] == ROLE_ADMIN:
+        await CS.recover_stale_reservations(user, admin_id=str(user["_id"]))
+        await CS.recover_pending_collections(user)
     query = _collection_query(user)
     if status:
         query["collection_status"] = status
@@ -254,6 +272,7 @@ class PrepareIn(BaseModel):
 
 @router.post("/admin-remittances")
 async def prepare_remittance(payload: PrepareIn, request: Request, user: dict = Depends(require_admin_role)):
+    await CS.recover_stale_reservations(user, request, admin_id=str(user["_id"]))
     ids = list(dict.fromkeys(payload.collection_ids))
     docs = await db.payments.find({"_id": {"$in": ids}, "payment_channel": CS.CH_ADMIN}).to_list(200)
     if len(docs) != len(ids):
@@ -263,6 +282,8 @@ async def prepare_remittance(payload: PrepareIn, request: Request, user: dict = 
             raise HTTPException(status_code=403, detail="Terdapat penerimaan milik Admin lain")
         if p.get("collection_status") != CS.COL_COLLECTED or p.get("remittance_id"):
             raise HTTPException(status_code=409, detail="Terdapat penerimaan yang sudah masuk setoran lain")
+        if p.get("commit_state") in (CS.COMMIT_PENDING, CS.COMMIT_ABORTED):
+            raise HTTPException(status_code=409, detail="Terdapat penerimaan yang belum selesai diproses")
     lenders = {p.get("lender_id") for p in docs}
     if len(lenders) != 1 or None in lenders:
         raise HTTPException(status_code=400, detail="Satu setoran hanya boleh untuk satu Pendana")
@@ -271,46 +292,67 @@ async def prepare_remittance(payload: PrepareIn, request: Request, user: dict = 
     remittance_id = str(uuid.uuid4())
     number = await CS.next_number("REM")
     now = iso(now_utc())
-    claimed = []
-    for p in docs:
-        # Reservation atomik per item; bila kalah race, rollback klaim yang sudah didapat.
-        res = await db.payments.update_one(
-            {"_id": str(p["_id"]), "remittance_id": None, "collection_status": CS.COL_COLLECTED},
-            {"$set": {"remittance_id": remittance_id, "remittance_number": number,
-                      "collection_status": CS.COL_RESERVED}},
-        )
-        if res.modified_count == 0:
-            for cid in claimed:
-                await db.payments.update_one(
-                    {"_id": cid, "remittance_id": remittance_id},
-                    {"$set": {"remittance_id": None, "remittance_number": None,
-                              "collection_status": CS.COL_COLLECTED}},
-                )
-            raise HTTPException(status_code=409, detail="Penerimaan sudah diklaim setoran lain, silakan muat ulang")
-        claimed.append(str(p["_id"]))
+    token = str(uuid.uuid4())
+
+    async def _op(session):
+        # 1) parent dulu (PREPARING + token) → tidak akan pernah ada item RESERVED tanpa parent recoverable
+        if not await db.admin_remittances.find_one({"_id": remittance_id}, session=session):
+            await db.admin_remittances.insert_one({
+                "_id": remittance_id,
+                "remittance_number": number,
+                "admin_id": str(user["_id"]),
+                "lender_id": lender_id,
+                "status": CS.REM_PREPARING,
+                "reservation_token": token,
+                "requested_ids": ids,
+                "item_count": 0,
+                "total_amount": 0,
+                "proof_file_id": None,
+                "remittance_attempt_count": 0,
+                "remittance_attempts": [],
+                "submitted_at": None,
+                "verified_at": None,
+                "verified_by": None,
+                "rejected_at": None,
+                "rejected_by": None,
+                "rejection_reason": None,
+                "cancel_reason": None,
+                "cancelled_at": None,
+                "cancelled_by": None,
+                "created_at": now,
+                "updated_at": now,
+            }, session=session)
+        for p in docs:
+            res = await db.payments.update_one(
+                {"_id": str(p["_id"]), "remittance_id": None, "collection_status": CS.COL_COLLECTED},
+                {"$set": {"remittance_id": remittance_id, "remittance_number": number,
+                          "collection_status": CS.COL_RESERVED, "reservation_token": token,
+                          "reserved_at": now}}, session=session,
+            )
+            if res.modified_count == 0 and not await db.payments.find_one(
+                    {"_id": str(p["_id"]), "reservation_token": token}, session=session):
+                raise HTTPException(status_code=409,
+                                    detail="Penerimaan sudah diklaim setoran lain, silakan muat ulang")
+        return await CS.finish_prepare(await db.admin_remittances.find_one({"_id": remittance_id}, session=session),
+                                      session=session)
+
+    try:
+        await CS.atomic(_op)
+    except Exception:
+        released = await CS.release_reservations(remittance_id, token)
+        await db.admin_remittances.update_one(
+            {"_id": remittance_id, "status": CS.REM_PREPARING},
+            {"$set": {"status": CS.REM_CANCELLED, "item_count": 0, "total_amount": 0,
+                      "cancel_reason": "Penyiapan setoran gagal, seluruh reservasi dilepas",
+                      "cancelled_at": iso(now_utc()), "cancelled_by": str(user["_id"]),
+                      "updated_at": iso(now_utc())}})
+        await audit(request, user, "ADMIN_REMITTANCE_PREPARE_ROLLED_BACK", "admin_remittance", remittance_id,
+                    f"Penyiapan setoran {number} gagal; {released} reservasi dilepas kembali menjadi COLLECTED",
+                    {"status": CS.REM_PREPARING}, {"status": CS.REM_CANCELLED})
+        raise
 
     items = await db.payments.find({"remittance_id": remittance_id}).to_list(200)
     total = sum(LS.money(p.get("total_collected")) for p in items)
-    await db.admin_remittances.insert_one({
-        "_id": remittance_id,
-        "remittance_number": number,
-        "admin_id": str(user["_id"]),
-        "lender_id": lender_id,
-        "status": CS.REM_PREPARED,
-        "item_count": len(items),
-        "total_amount": total,
-        "proof_file_id": None,
-        "remittance_attempt_count": 0,
-        "remittance_attempts": [],
-        "submitted_at": None,
-        "verified_at": None,
-        "verified_by": None,
-        "rejected_at": None,
-        "rejected_by": None,
-        "rejection_reason": None,
-        "created_at": now,
-        "updated_at": now,
-    })
     await audit(request, user, "ADMIN_REMITTANCE_PREPARED", "admin_remittance", remittance_id,
                 f"Setoran bulk {number} disiapkan: {len(items)} pinjaman, total {rp(total)}",
                 None, {"total_amount": total, "items": [p.get("collection_number") for p in items]})
@@ -322,6 +364,7 @@ async def list_remittances(user: dict = Depends(get_current_user), status: Optio
     role, uid = user["role"], str(user["_id"])
     query: dict = {}
     if role == ROLE_ADMIN:
+        await CS.recover_stale_reservations(user, admin_id=uid)
         query["admin_id"] = uid
     elif role == ROLE_LENDER:
         query["lender_id"] = uid
@@ -329,6 +372,8 @@ async def list_remittances(user: dict = Depends(get_current_user), status: Optio
         raise HTTPException(status_code=403, detail="Tidak memiliki akses")
     if status:
         query["status"] = {"$in": [s.strip() for s in status.split(",") if s.strip()]}
+    else:
+        query["status"] = {"$ne": CS.REM_PREPARING}   # state transient internal, tidak ditampilkan
     docs = await db.admin_remittances.find(query).sort("created_at", -1).limit(200).to_list(200)
     return {"items": [await CS.serialize_remittance(r, viewer=user) for r in docs], "total": len(docs)}
 
@@ -427,13 +472,67 @@ async def verify_remittance(remittance_id: str, request: Request, user: dict = D
 
 @router.post("/admin-remittances/{remittance_id}/finalize")
 async def finalize_pending(remittance_id: str, request: Request, user: dict = Depends(require_roles(ROLE_SUPERADMIN, ROLE_LENDER))):
-    """Recovery idempotent bila proses verifikasi terhenti di tengah (crash/timeout)."""
+    """Recovery TEKNIS saja: melanjutkan verifikasi yang terhenti di state VERIFYING.
+
+    Bukan endpoint bisnis. Tidak bisa dipakai untuk melewati verifikasi Pendana: state harus
+    sudah VERIFYING (artinya Pendana pemilik memang sudah menekan verifikasi).
+    """
     r = await db.admin_remittances.find_one({"_id": remittance_id})
     if not r:
         raise HTTPException(status_code=404, detail="Setoran tidak ditemukan")
     CS.assert_can_read_remittance(r, user)
+    if r["status"] == CS.REM_VERIFIED:
+        return await CS.serialize_remittance(r, viewer=user)
+    if r["status"] != CS.REM_VERIFYING:
+        raise HTTPException(status_code=409, detail="Setoran ini tidak sedang dalam proses verifikasi Pendana")
     await CS.finalize_remittance(remittance_id, user, request)
     return await CS.serialize_remittance(await db.admin_remittances.find_one({"_id": remittance_id}), viewer=user)
+
+
+class CancelRemittanceIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post("/admin-remittances/{remittance_id}/cancel")
+async def cancel_remittance(remittance_id: str, payload: CancelRemittanceIn, request: Request,
+                            user: dict = Depends(require_staff)):
+    r = await db.admin_remittances.find_one({"_id": remittance_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Setoran tidak ditemukan")
+    if user["role"] == ROLE_ADMIN and r.get("admin_id") != str(user["_id"]):
+        raise HTTPException(status_code=403, detail="Bukan setoran Anda")
+    if r["status"] != CS.REM_PREPARED:
+        raise HTTPException(status_code=409, detail="Hanya setoran berstatus Siap Disetor yang dapat dibatalkan")
+    if int(r.get("remittance_attempt_count") or 0) > 0 or r.get("proof_file_id"):
+        raise HTTPException(status_code=409, detail="Setoran sudah pernah dikirim, gunakan alur verifikasi/penolakan")
+    now = iso(now_utc())
+    res = await db.admin_remittances.update_one(
+        {"_id": remittance_id, "status": CS.REM_PREPARED, "remittance_attempt_count": 0},
+        {"$set": {"status": CS.REM_CANCELLED, "cancel_reason": payload.reason.strip(), "cancelled_at": now,
+                  "cancelled_by": str(user["_id"]), "updated_at": now}},
+    )
+    if res.modified_count == 0:
+        raise HTTPException(status_code=409, detail="Setoran ini tidak dapat dibatalkan pada status saat ini")
+    released = await CS.release_reservations(remittance_id)
+    await audit(request, user, "ADMIN_REMITTANCE_CANCELLED", "admin_remittance", remittance_id,
+                f"Setoran {r['remittance_number']} ({rp(r.get('total_amount'))}) dibatalkan: {payload.reason.strip()}. "
+                f"{released} penerimaan kembali menjadi dana titipan Admin.",
+                {"status": CS.REM_PREPARED, "item_count": r.get("item_count")},
+                {"status": CS.REM_CANCELLED, "released": released, "reason": payload.reason.strip()})
+    if user["role"] == ROLE_SUPERADMIN and r.get("admin_id"):
+        await notify_user(r["admin_id"], "loan",
+                          f"⚠️ <b>SETORAN DIBATALKAN</b>\n\n{r['remittance_number']} dibatalkan Superadmin.\n"
+                          f"Alasan: {payload.reason.strip()}\n\nPenerimaan kembali menjadi dana titipan Anda.",
+                          "ADMIN_REMITTANCE_CANCELLED", None)
+    return await CS.serialize_remittance(await db.admin_remittances.find_one({"_id": remittance_id}), viewer=user)
+
+
+@router.post("/admin-remittances/recover-stale")
+async def recover_stale(request: Request, user: dict = Depends(require_superadmin)):
+    """Bersihkan HANYA reservasi yang memenuhi kriteria stale/orphan (bukan force-unlock)."""
+    rem = await CS.recover_stale_reservations(user, request)
+    col = await CS.recover_pending_collections(user, request)
+    return {**rem, **col, "transaction_mode": await CS.transaction_supported()}
 
 
 class RejectIn(BaseModel):

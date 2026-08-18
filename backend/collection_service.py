@@ -12,7 +12,7 @@ import logging
 import uuid
 from typing import Optional
 from fastapi import HTTPException
-from core import db, now_utc, iso, parse_dt, audit, ROLE_ADMIN, ROLE_SUPERADMIN, ROLE_LENDER
+from core import db, client, now_utc, iso, parse_dt, audit, ROLE_ADMIN, ROLE_SUPERADMIN, ROLE_LENDER
 import loan_service as LS
 
 logger = logging.getLogger("app")
@@ -25,13 +25,204 @@ COL_RESERVED = "RESERVED"            # terikat pada remittance (PREPARED/WAITING
 COL_VERIFIED = "VERIFIED"            # setoran diverifikasi Pendana -> loan PAID
 COL_REVERSED = "REVERSED"
 
+REM_PREPARING = "PREPARING"          # transient: reservasi sedang dibuat
 REM_PREPARED = "PREPARED"
 REM_WAITING = "WAITING_VERIFICATION"
 REM_VERIFYING = "VERIFYING"
 REM_VERIFIED = "VERIFIED"
 REM_REJECTED = "REJECTED"
+REM_CANCELLED = "CANCELLED"
+
+COMMIT_PENDING = "PENDING"
+COMMIT_DONE = "COMMITTED"
+COMMIT_ABORTED = "ABORTED"
+
+# Reservation lease: hanya remittance PREPARING yang melewati batas ini boleh dianggap terlantar.
+STALE_PREPARE_SECONDS = 120
+STALE_COLLECT_SECONDS = 60
 
 METHODS = ("CASH", "TRANSFER_TO_ADMIN")
+
+
+_tx_supported: Optional[bool] = None
+
+
+async def transaction_supported() -> bool:
+    """Deteksi kapabilitas nyata (bukan asumsi konfigurasi): coba jalankan transaction sungguhan."""
+    global _tx_supported
+    if _tx_supported is None:
+        try:
+            async with await client.start_session() as s:
+                async with s.start_transaction():
+                    await db.tx_capability_probe.update_one(
+                        {"_id": "probe"}, {"$set": {"at": iso(now_utc())}}, upsert=True, session=s)
+                    await s.abort_transaction()
+            _tx_supported = True
+            logger.info("MongoDB transaction tersedia: dipakai untuk operasi atomik koleksi/setoran")
+        except Exception as e:
+            _tx_supported = False
+            logger.warning("MongoDB transaction tidak tersedia (%s) — memakai idempotent recovery", e)
+    return _tx_supported
+
+
+def _tx_unsupported_error(e: Exception) -> bool:
+    msg = str(e)
+    return ("Transaction numbers are only allowed" in msg or "Transactions are not supported" in msg
+            or "not supported" in msg and "transaction" in msg.lower())
+
+
+async def atomic(op):
+    """Jalankan `op(session)`.
+
+    TRANSACTION bila tersedia, IDEMPOTENT RECOVERY sebagai safety net: `op` wajib ditulis
+    idempoten sehingga tetap aman ketika session bernilai None.
+    """
+    global _tx_supported
+    if await transaction_supported():
+        try:
+            async with await client.start_session() as s:
+                async with s.start_transaction():
+                    return await op(s)
+        except HTTPException:
+            raise
+        except Exception as e:
+            if _tx_unsupported_error(e):
+                _tx_supported = False
+                logger.warning("Fallback ke mode non-transaction: %s", e)
+                return await op(None)
+            raise
+    return await op(None)
+
+
+def visible_collection_filter() -> dict:
+    """Koleksi yang boleh tampil/dipakai: bukan reversed, dan commit-nya tidak menggantung."""
+    return {"payment_channel": CH_ADMIN,
+            "collection_status": {"$ne": COL_REVERSED},
+            "commit_state": {"$nin": [COMMIT_PENDING, COMMIT_ABORTED]}}
+
+
+async def recover_pending_collections(actor=None, request=None, payment_id: Optional[str] = None,
+                                      stale_seconds: int = STALE_COLLECT_SECONDS) -> dict:
+    """Selesaikan (forward) atau batalkan penerimaan yang crash di tengah proses."""
+    q = {"payment_channel": CH_ADMIN, "commit_state": COMMIT_PENDING}
+    if payment_id:
+        q["_id"] = payment_id
+    docs = await db.payments.find(q).to_list(500)
+    committed, aborted = 0, 0
+    for p in docs:
+        age = (now_utc() - parse_dt(p.get("created_at"))).total_seconds() if p.get("created_at") else 1e9
+        if not payment_id and age < stale_seconds:
+            continue
+        loan = await db.loans.find_one({"_id": p.get("loan_id")})
+        if loan and loan["status"] in (LS.S_ACTIVE, LS.S_OVERDUE, LS.S_COLLECTED):
+            if loan["status"] != LS.S_COLLECTED:
+                await db.loans.update_one(
+                    {"_id": loan["_id"], "status": {"$in": [LS.S_ACTIVE, LS.S_OVERDUE]}},
+                    {"$set": {"status": LS.S_COLLECTED, "collected_at": p.get("collected_at"),
+                              "collected_by": p.get("collector_admin_id"),
+                              "late_days_final": p.get("late_days_snapshot") or 0,
+                              "late_fee_final": LS.money(p.get("late_fee_snapshot")),
+                              "actual_payment_amount": LS.money(p.get("total_collected"))}})
+                await LS.record_status(loan["_id"], loan["status"], LS.S_COLLECTED, actor,
+                                       f"Recovery: penerimaan {p.get('collection_number')} dilanjutkan")
+            await db.payments.update_one({"_id": str(p["_id"]), "commit_state": COMMIT_PENDING},
+                                         {"$set": {"commit_state": COMMIT_DONE}})
+            committed += 1
+            await audit(request, actor, "ADMIN_COLLECTION_RECOVERED", "payment", str(p["_id"]),
+                        f"Recovery: penerimaan {p.get('collection_number')} diselesaikan secara idempoten",
+                        {"commit_state": COMMIT_PENDING}, {"commit_state": COMMIT_DONE})
+        else:
+            await db.payments.update_one({"_id": str(p["_id"]), "commit_state": COMMIT_PENDING},
+                                         {"$set": {"commit_state": COMMIT_ABORTED, "collection_status": COL_REVERSED,
+                                                   "status": "REVERSED",
+                                                   "reversal_reason": "Recovery: proses penerimaan tidak selesai"}})
+            aborted += 1
+            await audit(request, actor, "ADMIN_COLLECTION_ABORTED", "payment", str(p["_id"]),
+                        f"Recovery: penerimaan {p.get('collection_number')} dibatalkan karena proses tidak selesai",
+                        {"commit_state": COMMIT_PENDING}, {"commit_state": COMMIT_ABORTED})
+    return {"committed": committed, "aborted": aborted}
+
+
+async def release_reservations(remittance_id: str, token: Optional[str] = None, session=None) -> int:
+    q = {"remittance_id": remittance_id, "collection_status": COL_RESERVED}
+    if token:
+        q["reservation_token"] = token
+    res = await db.payments.update_many(
+        q, {"$set": {"remittance_id": None, "remittance_number": None, "collection_status": COL_COLLECTED},
+            "$unset": {"reservation_token": "", "reserved_at": ""}}, session=session)
+    return res.modified_count
+
+
+async def finish_prepare(rem: dict, session=None) -> dict:
+    """Idempotent: PREPARING -> PREPARED dengan total dihitung ulang dari item ter-reserve."""
+    rid = str(rem["_id"])
+    items = await db.payments.find({"remittance_id": rid}, session=session).to_list(200)
+    total = sum(LS.money(p.get("total_collected")) for p in items)
+    await db.admin_remittances.update_one(
+        {"_id": rid, "status": REM_PREPARING},
+        {"$set": {"status": REM_PREPARED, "item_count": len(items), "total_amount": total,
+                  "updated_at": iso(now_utc())}}, session=session)
+    return await db.admin_remittances.find_one({"_id": rid}, session=session)
+
+
+async def recover_stale_reservations(actor=None, request=None, admin_id: Optional[str] = None,
+                                     stale_seconds: int = STALE_PREPARE_SECONDS) -> dict:
+    """Hanya menyentuh reservasi yang benar-benar stale/orphan.
+
+    Kriteria aman: (a) parent remittance masih PREPARING melewati lease, atau (b) parent
+    remittance tidak ada / sudah CANCELLED. Reservasi PREPARED yang valid TIDAK pernah dilepas.
+    """
+    finished, cancelled, released = 0, 0, 0
+    q = {"status": REM_PREPARING}
+    if admin_id:
+        q["admin_id"] = admin_id
+    for rem in await db.admin_remittances.find(q).to_list(200):
+        created = parse_dt(rem.get("created_at")) if rem.get("created_at") else None
+        if created and (now_utc() - created).total_seconds() < stale_seconds:
+            continue
+        rid, token = str(rem["_id"]), rem.get("reservation_token")
+        reserved = await db.payments.count_documents({"remittance_id": rid, "reservation_token": token})
+        requested = list(rem.get("requested_ids") or [])
+        if requested and reserved == len(requested):
+            await finish_prepare(rem)
+            finished += 1
+            await audit(request, actor, "ADMIN_REMITTANCE_PREPARE_RECOVERED", "admin_remittance", rid,
+                        f"Recovery: penyiapan setoran {rem.get('remittance_number')} dilanjutkan sampai PREPARED "
+                        f"({reserved} item)", {"status": REM_PREPARING}, {"status": REM_PREPARED})
+        else:
+            released += await release_reservations(rid, token)
+            await db.admin_remittances.update_one(
+                {"_id": rid, "status": REM_PREPARING},
+                {"$set": {"status": REM_CANCELLED, "item_count": 0, "total_amount": 0,
+                          "cancel_reason": "Recovery: penyiapan setoran tidak selesai",
+                          "cancelled_at": iso(now_utc()),
+                          "cancelled_by": str((actor or {}).get("_id")) if actor else None,
+                          "updated_at": iso(now_utc())}})
+            cancelled += 1
+            await audit(request, actor, "ADMIN_REMITTANCE_PREPARE_ROLLED_BACK", "admin_remittance", rid,
+                        f"Recovery: penyiapan setoran {rem.get('remittance_number')} dibatalkan, "
+                        f"{reserved} reservasi dilepas kembali menjadi COLLECTED",
+                        {"status": REM_PREPARING}, {"status": REM_CANCELLED})
+
+    # Orphan: item RESERVED yang parent-nya hilang atau sudah CANCELLED.
+    oq = {"payment_channel": CH_ADMIN, "collection_status": COL_RESERVED, "remittance_id": {"$ne": None}}
+    if admin_id:
+        oq["collector_admin_id"] = admin_id
+    orphans = 0
+    for p in await db.payments.find(oq).to_list(1000):
+        rem = await db.admin_remittances.find_one({"_id": p.get("remittance_id")})
+        if rem and rem.get("status") != REM_CANCELLED:
+            continue
+        await db.payments.update_one(
+            {"_id": str(p["_id"]), "collection_status": COL_RESERVED},
+            {"$set": {"remittance_id": None, "remittance_number": None, "collection_status": COL_COLLECTED},
+             "$unset": {"reservation_token": "", "reserved_at": ""}})
+        orphans += 1
+        await audit(request, actor, "ADMIN_COLLECTION_RESERVATION_RELEASED", "payment", str(p["_id"]),
+                    f"Recovery: reservasi terlantar pada {p.get('collection_number')} dilepas kembali",
+                    {"collection_status": COL_RESERVED}, {"collection_status": COL_COLLECTED})
+    return {"prepare_finished": finished, "prepare_cancelled": cancelled,
+            "reservations_released": released, "orphans_released": orphans}
 
 
 async def next_number(prefix: str) -> str:
@@ -201,7 +392,7 @@ async def finalize_remittance(remittance_id: str, actor: Optional[dict], request
 
 
 async def admin_cash_summary(admin_id: Optional[str] = None) -> dict:
-    query = {"payment_channel": CH_ADMIN, "collection_status": {"$ne": COL_REVERSED}}
+    query = visible_collection_filter()
     if admin_id:
         query["collector_admin_id"] = admin_id
     docs = await db.payments.find(query).to_list(5000)

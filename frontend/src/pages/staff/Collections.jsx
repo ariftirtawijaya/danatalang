@@ -19,6 +19,7 @@ const REM_LABEL = {
   VERIFYING: "Sedang Diproses",
   VERIFIED: "Selesai",
   REJECTED: "Ditolak",
+  CANCELLED: "Dibatalkan",
 };
 
 function ItemRow({ i }) {
@@ -40,6 +41,8 @@ export default function Collections() {
   const [busy, setBusy] = useState(false);
   const [submitTarget, setSubmitTarget] = useState(null);
   const [file, setFile] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const summary = useQuery({ queryKey: ["col-summary"], queryFn: async () => (await api.get("/admin-collections/summary")).data });
   const pending = useQuery({
@@ -84,12 +87,37 @@ export default function Collections() {
     } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
   };
 
+  const cancelRem = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/admin-remittances/${cancelTarget.id}/cancel`, { reason: cancelReason.trim() });
+      toast.success("Setoran dibatalkan, penerimaan kembali menjadi dana titipan");
+      setCancelTarget(null); setCancelReason("");
+      await refresh();
+    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+  };
+
+  const recoverStale = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/admin-remittances/recover-stale");
+      toast.success(`Recovery selesai: ${res.data.reservations_released + res.data.orphans_released} reservasi dilepas, ${res.data.prepare_finished} dilanjutkan`);
+      await refresh();
+    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+  };
+
   const byStatus = (s) => (rems.data?.items || []).filter((r) => s.includes(r.status));
 
   return (
     <div>
       <PageHeader title={isSuper ? "Koleksi Lapangan" : "Penagihan / Koleksi"}
-        description="Pembayaran Peminjam yang diterima Admin di lapangan dan setoran bulk ke Pendana." />
+        description="Pembayaran Peminjam yang diterima Admin di lapangan dan setoran bulk ke Pendana.">
+        {isSuper && (
+          <Button data-testid="recover-stale-btn" variant="outline" className="rounded-full" disabled={busy} onClick={recoverStale}>
+            Bersihkan Reservasi Terlantar
+          </Button>
+        )}
+      </PageHeader>
 
       <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="collection-summary">
         <StatCard testId="stat-cash-in-hand" label="Dana Titipan" value={rupiah(summary.data?.cash_in_hand)} icon={Wallet} tone="active" sub={`${summary.data?.collections || 0} penerimaan`} />
@@ -164,7 +192,7 @@ export default function Collections() {
         </TabsContent>
 
         {[["prepared", ["PREPARED", "REJECTED"]], ["waiting", ["WAITING_VERIFICATION", "VERIFYING"]], ["done", ["VERIFIED"]],
-          ["history", ["PREPARED", "REJECTED", "WAITING_VERIFICATION", "VERIFYING", "VERIFIED"]]].map(([tab, statuses]) => (
+          ["history", ["PREPARED", "REJECTED", "WAITING_VERIFICATION", "VERIFYING", "VERIFIED", "CANCELLED"]]].map(([tab, statuses]) => (
           <TabsContent key={tab} value={tab}>
             {rems.isLoading ? <LoadingRows /> : byStatus(statuses).length ? (
               <div className="space-y-5" data-testid={`rem-list-${tab}`}>
@@ -192,8 +220,15 @@ export default function Collections() {
                         {!isSuper && ["PREPARED", "REJECTED"].includes(r.status) && (
                           <Button data-testid={`submit-rem-btn-${r.id}`} className="rounded-full" onClick={() => setSubmitTarget(r)}>Kirim Bukti Setoran</Button>
                         )}
+                        {r.status === "PREPARED" && !r.remittance_attempt_count && (
+                          <Button data-testid={`cancel-rem-btn-${r.id}`} variant="outline" className="rounded-full"
+                            onClick={() => { setCancelTarget(r); setCancelReason(""); }}>Batalkan Setoran</Button>
+                        )}
                       </div>
                     </div>
+                    {r.status === "CANCELLED" && (
+                      <p className="mt-3 text-sm text-muted-foreground" data-testid={`rem-cancelled-${r.id}`}>Dibatalkan: {r.cancel_reason}</p>
+                    )}
                     {r.rejection_reason && r.status === "REJECTED" && (
                       <p className="mt-3 text-sm text-destructive" data-testid={`rem-rejected-${r.id}`}>Ditolak Pendana: {r.rejection_reason}</p>
                     )}
@@ -215,6 +250,34 @@ export default function Collections() {
           </TabsContent>
         ))}
       </Tabs>
+
+      <Dialog open={!!cancelTarget} onOpenChange={() => { setCancelTarget(null); setCancelReason(""); }}>
+        <DialogContent data-testid="cancel-rem-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Batalkan Setoran</DialogTitle>
+            <DialogDescription>
+              Seluruh penerimaan pada batch ini kembali menjadi dana titipan Admin. Data setoran tetap tersimpan
+              sebagai riwayat audit.
+            </DialogDescription>
+          </DialogHeader>
+          {cancelTarget && (
+            <div className="space-y-4">
+              <Field label="Nomor Setoran" value={cancelTarget.remittance_number} />
+              <Field label="Total" value={rupiah(cancelTarget.total_amount)} mono />
+              <div className="space-y-2">
+                <Label>Alasan pembatalan (minimal 5 karakter)</Label>
+                <Input data-testid="cancel-rem-reason" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)}
+                  placeholder="Contoh: salah pilih penerimaan" className="h-11 rounded-xl" />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCancelTarget(null)} disabled={busy}>Tutup</Button>
+            <Button data-testid="cancel-rem-confirm" variant="destructive" disabled={busy || cancelReason.trim().length < 5}
+              onClick={cancelRem}>{busy ? "Memproses..." : "Batalkan Setoran"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!submitTarget} onOpenChange={() => { setSubmitTarget(null); setFile(null); }}>
         <DialogContent data-testid="submit-rem-dialog">

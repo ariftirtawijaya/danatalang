@@ -93,3 +93,4 @@ credentials.json
 .credentials
 .storage
 .env.prod
+frontend/node_modules/.cache/default-development/7.pack
