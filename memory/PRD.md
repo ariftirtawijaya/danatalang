@@ -143,3 +143,8 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 4. Rounding: split_pool() largest remainder (floor + alokasi sisa deterministik) -> tidak pernah negatif, total selalu = profit_pool.
 5. Cleanup orphan proof: _discard_upload() menghapus doc files + object storage untuk request yang kalah (409) pada settlement & admin payout.
 - Test baru iter18: 9 passed. iter17 8, iter16 16, regresi lama 55.
+
+### Fail-safe Factory Reset (2026-08-18)
+- Storage purge dijalankan lebih dulu; MongoDB/settings/users HANYA dihapus bila storage benar-benar bersih (failed==0, remaining_objects==0, remaining_bytes==0, tanpa error).
+- Bila purge gagal/partial: proses STOP sebelum wipe DB, response ok=false status FAILED/PARTIAL + aborted_before_db_wipe=true, audit mencatat "DIBATALKAN", data & primary Superadmin tetap utuh, reset bisa di-retry.
+- Test: mode storage-fail memverifikasi DB utuh (1 distribusi, 1 loan, 2 file, 4 user, settings 70/20/10 belum direset) + retry setelah storage sehat menghasilkan SUCCESS penuh.

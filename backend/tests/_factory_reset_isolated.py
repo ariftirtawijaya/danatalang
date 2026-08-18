@@ -166,12 +166,42 @@ async def main():
         assert result["reset"]["status"] != "SUCCESS", result["reset"]
         assert result["reset"]["status"] == "FAILED", result["reset"]
         assert result["reset"]["storage_ok"] is False
+        assert result["reset"]["ok"] is False
+        assert result["reset"]["aborted_before_db_wipe"] is True
         assert result["reset"]["storage"].get("error"), result["reset"]["storage"]
+        settings_after = await core.get_settings()
+        result["after"] = {
+            "storage_objects_left": len(storage.list_objects(None)),
+            # FAIL-SAFE: MongoDB harus TETAP UTUH
+            "profit_distributions": await db.profit_distributions.count_documents({}),
+            "loans": await db.loans.count_documents({}),
+            "files": await db.files.count_documents({}),
+            "users": await db.users.count_documents({}),
+            "keeper_exists": bool(await db.users.find_one({"_id": keeper_id})),
+            "profit_share": [settings_after["profit_share_lender_pct"], settings_after["profit_share_admin_pct"],
+                             settings_after["profit_share_platform_pct"]],
+            "settlement_account_number": settings_after["settlement_account_number"],
+        }
+        a = result["after"]
+        assert a["profit_distributions"] == 1, "distribusi tidak boleh terhapus saat storage gagal"
+        assert a["loans"] == 1 and a["files"] == 2, a
+        assert a["users"] == 4 and a["keeper_exists"] is True, a
+        assert a["profit_share"] == [70.0, 20.0, 10.0], "settings tidak boleh direset saat storage gagal"
+        assert a["settlement_account_number"] == "999888777", "rekening settlement tidak boleh direset"
         audit_doc = await db.audit_logs.find_one({"action": "SYSTEM_FACTORY_RESET"})
         assert audit_doc and audit_doc["new_value"]["status"] == "FAILED", audit_doc
-        assert "GAGAL PADA STORAGE" in audit_doc["description"]
-        result["after"] = {"storage_objects_left": len(storage.list_objects(None))}
-        storage.purge_prefix(None)
+        assert audit_doc["new_value"]["aborted_before_db_wipe"] is True
+        assert "DIBATALKAN" in audit_doc["description"]
+        # retry setelah storage sehat harus berhasil
+        admin_routes.purge_prefix = storage.purge_prefix
+        retry = await admin_routes.factory_reset(payload, None, keeper)
+        result["retry"] = {"status": retry["status"], "storage_ok": retry["storage_ok"],
+                           "profit_distributions": await db.profit_distributions.count_documents({}),
+                           "users": await db.users.count_documents({}),
+                           "storage_objects": len(storage.list_objects(None))}
+        assert result["retry"]["status"] == "SUCCESS" and result["retry"]["storage_ok"] is True
+        assert result["retry"]["profit_distributions"] == 0 and result["retry"]["users"] == 1
+        assert result["retry"]["storage_objects"] == 0
         await core.client.drop_database(os.environ["DB_NAME"])
         MOTO.stop()
         result["cleanup"] = "test database dropped, moto s3 stopped"

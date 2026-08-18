@@ -34,9 +34,21 @@ def test_factory_reset_storage_exception_never_success():
     assert result["mode"] == "storage-fail"
     assert result["reset"]["status"] == "FAILED"
     assert result["reset"]["storage_ok"] is False
+    assert result["reset"]["ok"] is False
+    assert result["reset"]["aborted_before_db_wipe"] is True
     assert result["reset"]["storage"]["error"]
     # object memang masih tertinggal -> status wajib bukan SUCCESS
     assert result["after"]["storage_objects_left"] >= 2
+    # FAIL-SAFE: MongoDB tidak boleh dihapus ketika storage gagal
+    a = result["after"]
+    assert a["profit_distributions"] == 1 and a["loans"] == 1 and a["files"] == 2
+    assert a["users"] == 4 and a["keeper_exists"] is True
+    assert a["profit_share"] == [70.0, 20.0, 10.0]
+    assert a["settlement_account_number"] == "999888777"
+    # retry setelah storage sehat menghasilkan reset lengkap
+    assert result["retry"]["status"] == "SUCCESS"
+    assert result["retry"]["profit_distributions"] == 0 and result["retry"]["users"] == 1
+    assert result["retry"]["storage_objects"] == 0
 
 
 def test_factory_reset_success_path_still_ok():
