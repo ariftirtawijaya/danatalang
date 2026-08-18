@@ -28,6 +28,7 @@ export default function Profile() {
   const isLender = user?.role === "lender";
   const isBorrower = user?.role === "borrower";
   const isSuper = user?.role === "superadmin";
+  const canBank = user?.role === "lender" || user?.role === "admin";
   const phoneChanged = isSuper && form.phone && form.phone !== user?.phone;
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -37,7 +38,7 @@ export default function Profile() {
     setSaving(true);
     try {
       const payload = { full_name: form.full_name, email: form.email };
-      if (isLender) {
+      if (canBank) {
         payload.bank_name = form.bank_name;
         payload.account_number = form.account_number;
         payload.account_holder = form.account_holder;
@@ -124,7 +125,7 @@ export default function Profile() {
               <Label>Email</Label>
               <Input data-testid="profile-email-input" type="email" value={form.email} onChange={set("email")} className="h-11 rounded-xl" />
             </div>
-            {isLender && (
+            {canBank && (
               <>
                 <div className="space-y-2">
                   <Label>Nama Bank</Label>

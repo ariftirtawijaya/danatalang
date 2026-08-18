@@ -634,6 +634,7 @@ async def test_telegram(payload: TestTelegramIn, user: dict = Depends(require_su
 WIPE_COLLECTIONS = [
     "loans", "loan_status_histories", "disbursements", "payments", "notifications",
     "admin_notes", "audit_logs", "files", "counters", "login_attempts", "profit_distributions",
+    "admin_remittances",
 ]
 
 

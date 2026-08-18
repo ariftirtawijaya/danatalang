@@ -7,6 +7,7 @@ export const LOAN_STATUS = {
   ACTIVE: { label: "Aktif", tone: "active" },
   OVERDUE: { label: "Terlambat", tone: "warning" },
   WAITING_PAYMENT_VERIFICATION: { label: "Verifikasi Pembayaran", tone: "pending" },
+  PAYMENT_COLLECTED: { label: "Pembayaran Diterima Admin", tone: "active" },
   PAID: { label: "Lunas", tone: "success" },
   CANCELLED: { label: "Dibatalkan", tone: "rejected" },
 };
@@ -72,6 +73,12 @@ export const ACTION_LABELS = {
   ADMIN_PAYOUT_MARKED_PAID: "Payout Admin Ditandai Dibayar",
   PROFIT_DISTRIBUTION_REVERSED: "Pembagian Hasil Dibatalkan",
   PROFIT_DISTRIBUTION_CORRECTED: "Koreksi Finansial Pembagian Hasil",
+  ADMIN_COLLECTION_CREATED: "Pembayaran Diterima Admin",
+  ADMIN_COLLECTION_REVERSED: "Penerimaan Admin Dibatalkan",
+  ADMIN_REMITTANCE_PREPARED: "Setoran Bulk Disiapkan",
+  ADMIN_REMITTANCE_SUBMITTED: "Bukti Setoran Dikirim",
+  ADMIN_REMITTANCE_VERIFIED: "Setoran Admin Diverifikasi",
+  ADMIN_REMITTANCE_REJECTED: "Setoran Admin Ditolak",
   SYSTEM_FACTORY_RESET: "Factory Reset Sistem",
 };
 
@@ -88,6 +95,7 @@ export const ENTITY_LABELS = {
   loan: "Pinjaman",
   payment: "Pembayaran",
   profit_distribution: "Pembagian Hasil",
+  admin_remittance: "Setoran Admin",
   settings: "Pengaturan",
   system: "Sistem",
 };

@@ -117,6 +117,8 @@ export default function LoanDetail() {
   const [dialog, setDialog] = useState(null);
   const [adminId, setAdminId] = useState("");
   const [assignReason, setAssignReason] = useState("");
+  const [collectMethod, setCollectMethod] = useState("CASH");
+  const [collectNotes, setCollectNotes] = useState("");
 
   const { data: loan, isLoading, refetch } = useQuery({
     queryKey: ["loan", id],
@@ -416,6 +418,30 @@ export default function LoanDetail() {
                   Saya Sudah Membayar
                 </Button>
               )}
+              {role === "admin" && ["ACTIVE", "OVERDUE"].includes(loan.status)
+                && loan.profit_share?.assigned_admin_id === user?.id && (
+                <Button data-testid="collect-payment-btn" className="w-full rounded-full" onClick={() => setDialog("collect")}>
+                  Terima Pembayaran
+                </Button>
+              )}
+              {loan.status === "PAYMENT_COLLECTED" && (
+                <div className="rounded-xl bg-emerald-50 p-4 text-sm dark:bg-emerald-500/10" data-testid="collected-notice">
+                  <p className="font-semibold text-emerald-700 dark:text-emerald-300">Pembayaran telah diterima Admin</p>
+                  {loan.collection && (
+                    <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                      <p>No Bukti: <span className="num font-semibold text-foreground">{loan.collection.collection_number}</span></p>
+                      <p>Admin: {loan.collection.admin_name}</p>
+                      <p>Waktu: {formatDateTime(loan.collection.collected_at)}</p>
+                      <p>Metode: {loan.collection.collection_method === "CASH" ? "Tunai" : "Transfer ke Admin"}</p>
+                      <p>Pokok {rupiah(loan.collection.principal_snapshot)} · Bunga {rupiah(loan.collection.interest_snapshot)} · Denda {rupiah(loan.collection.late_fee_snapshot)}</p>
+                      <p className="num text-sm font-semibold text-foreground">Total {rupiah(loan.collection.total_collected)}</p>
+                    </div>
+                  )}
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Pembayaran Anda telah diterima. Tidak ada denda tambahan. Penyelesaian kepada Pendana merupakan proses internal DanaTalang.
+                  </p>
+                </div>
+              )}
               {role === "borrower" && loan.status === "WAITING_PAYMENT_VERIFICATION" && (
                 <p className="text-sm text-muted-foreground">Menunggu verifikasi pembayaran oleh Pendana.</p>
               )}
@@ -504,6 +530,49 @@ export default function LoanDetail() {
               onClick={() => run(() => api.post(`/loans/${loan.id}/approve`, { assigned_admin_id: adminId }), "Pengajuan disetujui")}
             >
               {busy ? "Memproses..." : "Setujui Pengajuan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === "collect"} onOpenChange={() => setDialog(null)}>
+        <DialogContent data-testid="collect-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Terima Pembayaran Peminjam</DialogTitle>
+            <DialogDescription>
+              Nominal dihitung sistem dan tidak dapat diubah. Setelah dikonfirmasi, denda berhenti dan dana menjadi titipan Admin.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Nomor Pinjaman" value={loan.loan_number} mono />
+              <Field label="Peminjam" value={loan.borrower_name} />
+              <Field label="Pokok" value={rupiah(loan.principal_amount)} mono />
+              <Field label="Bunga" value={rupiah(loan.interest_amount)} mono />
+              <Field label={`Denda (${loan.late_days || 0} hari)`} value={rupiah(loan.late_fee_amount)} mono />
+              <Field label="Total Diterima" value={rupiah(loan.total_due)} mono />
+            </div>
+            <Select value={collectMethod} onValueChange={setCollectMethod}>
+              <SelectTrigger data-testid="collect-method-select" className="h-11 rounded-xl">
+                <SelectValue placeholder="Metode penerimaan" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CASH">Tunai</SelectItem>
+                <SelectItem value="TRANSFER_TO_ADMIN">Transfer ke Admin</SelectItem>
+              </SelectContent>
+            </Select>
+            <Textarea data-testid="collect-notes" rows={2} value={collectNotes} onChange={(e) => setCollectNotes(e.target.value)} placeholder="Catatan (opsional)" />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialog(null)} disabled={busy}>Batal</Button>
+            <Button data-testid="collect-submit-btn" disabled={busy || !collectMethod}
+              onClick={() => run(() => {
+                const fd = new FormData();
+                fd.append("collection_method", collectMethod);
+                if (collectNotes) fd.append("notes", collectNotes);
+                return api.post(`/loans/${loan.id}/collect`, fd);
+              }, "Pembayaran diterima, denda dihentikan")}>
+              {busy ? "Memproses..." : "Konfirmasi Terima"}
             </Button>
           </DialogFooter>
         </DialogContent>

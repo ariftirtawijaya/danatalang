@@ -18,6 +18,7 @@ import auth_routes
 import loan_routes
 import admin_routes
 import profit_routes
+import collection_routes
 from storage import init_storage, s3_required
 from pymongo.errors import DuplicateKeyError
 
@@ -30,6 +31,7 @@ app.include_router(auth_routes.router)
 app.include_router(loan_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(profit_routes.router)
+app.include_router(collection_routes.router)
 
 app.add_middleware(
     CORSMiddleware,

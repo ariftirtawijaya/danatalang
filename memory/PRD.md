@@ -161,3 +161,10 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 ### Regresi penuh (2026-08-18)
 - iter18 13, iter17 8, iter16 16, iter4+flow 55, iter2/6/8/10/15 (batch) — semua hijau.
 - tests/test_iter3_factory_reset.py TIDAK dijalankan: suite destruktif (menjalankan factory reset nyata pada DB preview) dan butuh password Superadmin milik user. Cakupan factory reset dipenuhi oleh tests/_factory_reset_isolated.py (DB + bucket terisolasi, jalur SUCCESS & storage-fail).
+
+## Update 2026-08-18 — MODUL ADMIN COLLECTION + BULK REMITTANCE
+- payments diperluas: payment_channel (DIRECT_TO_LENDER default / ADMIN_COLLECTION), collection_number COL-YYYYMMDD-XXXX, collection_method, collector_admin_id, snapshot (principal/interest/late_days/late_fee/total_collected), collection_status, remittance_id.
+- Koleksi baru admin_remittances: REM-YYYYMMDD-XXXX, status PREPARED/WAITING_VERIFICATION/VERIFYING/VERIFIED/REJECTED + remittance_attempts[] immutable.
+- Status loan baru PAYMENT_COLLECTED (masuk CLOSED_STATUSES sehingga limit/outstanding/active count peminjam langsung pulih, denda beku).
+- File baru: backend/collection_service.py, backend/collection_routes.py, frontend staff/Collections.jsx, lender/AdminRemittance.jsx, tests/test_iter19_admin_collection.py.
+- Test: iter19 17/17; regresi iter16 16, iter17+18 21, iter4+flow 55, iter2/6/8/10/15 66 (1 skip).

@@ -176,6 +176,12 @@ async def get_loan(loan_id: str, user: dict = Depends(get_current_user)):
     if user["role"] == ROLE_LENDER and loan.get("funded_by") != str(user["_id"]):
         out.pop("borrower_bank", None)
         out.pop("borrower_nik", None)
+    if loan["status"] in (LS.S_COLLECTED, LS.S_PAID):
+        col = await db.payments.find_one({"loan_id": loan_id, "payment_channel": "ADMIN_COLLECTION",
+                                          "collection_status": {"$ne": "REVERSED"}})
+        if col:
+            import collection_service as CS
+            out["collection"] = await CS.serialize_collection(col)
     if user["role"] != ROLE_BORROWER:
         assigned_admin = (
             await db.users.find_one({"_id": loan.get("assigned_admin_id")}) if loan.get("assigned_admin_id") else None
@@ -215,6 +221,10 @@ async def change_assigned_admin(loan_id: str, payload: AssignedAdminIn, request:
             status_code=409,
             detail="Pinjaman sudah LUNAS. Koreksi hanya melalui mekanisme reversal pembagian hasil.",
         )
+    if await db.payments.find_one({"loan_id": loan_id, "payment_channel": "ADMIN_COLLECTION",
+                                   "collection_status": {"$nin": ["REVERSED"]}}):
+        raise HTTPException(status_code=409, detail="Admin penanggung jawab tidak dapat diubah karena pembayaran "
+                                                   "pinjaman ini sudah diterima Admin (dana titipan).")
     admin = await db.users.find_one({"_id": payload.admin_id, "role": ROLE_ADMIN, "is_active": True})
     if not admin:
         raise HTTPException(status_code=400, detail="Admin penanggung jawab tidak ditemukan atau tidak aktif")
@@ -600,6 +610,9 @@ async def verify_payment(payment_id: str, request: Request, user: dict = Depends
         raise HTTPException(status_code=404, detail="Pembayaran tidak ditemukan")
     if payment.get("lender_id") != str(user["_id"]):
         raise HTTPException(status_code=403, detail="Hanya Pendana pemilik pinjaman ini yang dapat memverifikasi")
+    if payment.get("payment_channel") == "ADMIN_COLLECTION":
+        raise HTTPException(status_code=409, detail="Pembayaran ini diterima Admin dan harus diselesaikan melalui "
+                                                   "verifikasi setoran Admin (menu Setoran Admin)")
     await PS.assert_ready_for_paid(await _get_loan_or_404(payment["loan_id"]))
     res = await db.payments.update_one(
         {"_id": payment_id, "status": "PENDING"},
@@ -774,7 +787,19 @@ async def download_file(file_id: str, user: dict = Depends(get_current_user)):
     rec = await db.files.find_one({"_id": file_id, "is_deleted": False})
     if not rec:
         raise HTTPException(status_code=404, detail="File tidak ditemukan")
-    if rec.get("kind") in ("settlement", "admin_payout"):
+    if rec.get("kind") == "remittance":
+        rem = await db.admin_remittances.find_one({"_id": rec.get("remittance_id")})
+        allowed = user["role"] == ROLE_SUPERADMIN or rec.get("uploaded_by") == str(user["_id"]) or (
+            rem and user["role"] == ROLE_LENDER and rem.get("lender_id") == str(user["_id"]))
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Tidak memiliki akses ke file ini")
+    elif rec.get("kind") == "collection":
+        loan = await db.loans.find_one({"_id": rec.get("loan_id")}) if rec.get("loan_id") else None
+        allowed = user["role"] == ROLE_SUPERADMIN or rec.get("uploaded_by") == str(user["_id"]) or (
+            loan and loan.get("borrower_id") == str(user["_id"]))
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Tidak memiliki akses ke file ini")
+    elif rec.get("kind") in ("settlement", "admin_payout"):
         dist = await db.profit_distributions.find_one({"_id": rec.get("profit_distribution_id")})
         if user["role"] != ROLE_SUPERADMIN and rec.get("uploaded_by") != str(user["_id"]):
             allowed = dist and user["role"] == ROLE_ADMIN and dist.get("assigned_admin_id") == str(user["_id"])

@@ -11,10 +11,11 @@ S_WAITING_DISB = "WAITING_DISBURSEMENT_CONFIRMATION"
 S_ACTIVE = "ACTIVE"
 S_OVERDUE = "OVERDUE"
 S_WAITING_PAYMENT = "WAITING_PAYMENT_VERIFICATION"
+S_COLLECTED = "PAYMENT_COLLECTED"
 S_PAID = "PAID"
 S_CANCELLED = "CANCELLED"
 
-CLOSED_STATUSES = [S_PAID, S_REJECTED, S_CANCELLED]
+CLOSED_STATUSES = [S_PAID, S_REJECTED, S_CANCELLED, S_COLLECTED]
 OUTSTANDING_QUERY = {"status": {"$nin": CLOSED_STATUSES}}
 
 
@@ -99,6 +100,11 @@ async def serialize_loan(loan: dict, deep: bool = False) -> dict:
         late_days = pending.get("late_days_at_submission") or 0
         late_fee = money(pending.get("late_fee_at_submission"))
         total_due = money(pending.get("amount_due_at_submission"))
+        frozen = True
+    elif status == S_COLLECTED:
+        late_days = loan.get("late_days_final") or 0
+        late_fee = money(loan.get("late_fee_final"))
+        total_due = money(loan.get("actual_payment_amount") or loan.get("base_repayment_amount"))
         frozen = True
     elif status == S_PAID:
         late_days = loan.get("late_days_final") or 0
