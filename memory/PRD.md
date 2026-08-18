@@ -148,3 +148,16 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - Storage purge dijalankan lebih dulu; MongoDB/settings/users HANYA dihapus bila storage benar-benar bersih (failed==0, remaining_objects==0, remaining_bytes==0, tanpa error).
 - Bila purge gagal/partial: proses STOP sebelum wipe DB, response ok=false status FAILED/PARTIAL + aborted_before_db_wipe=true, audit mencatat "DIBATALKAN", data & primary Superadmin tetap utuh, reset bisa di-retry.
 - Test: mode storage-fail memverifikasi DB utuh (1 distribusi, 1 loan, 2 file, 4 user, settings 70/20/10 belum direset) + retry setelah storage sehat menghasilkan SUCCESS penuh.
+
+### Fail-safe _discard_upload (2026-08-18)
+- Object storage dihapus LEBIH DULU (purge_object dikonfirmasi), metadata files baru dihapus bila object benar-benar hilang.
+- Bila purge gagal/exception: metadata dipertahankan + ditandai is_deleted=true, cleanup_pending=true, cleanup_error, cleanup_requested_at; file tidak dapat diakses via GET /api/files/{id} (404); request loser tetap 409; log warning.
+- Berlaku untuk settlement dan admin payout (jalur yang sama).
+- Test iter18 bertambah: race normal (metadata+object loser hilang) dan simulated purge failure per kind (settlement & admin_payout).
+
+### Catatan environment (2026-08-18)
+- 38 record files lama (prefix pinjamku/) menunjuk object yang hilang bersama MinIO pod sebelumnya; record stale tersebut dibersihkan agar regresi test_iter2 ObjectStorage kembali hijau. Bukan akibat perubahan kode.
+
+### Regresi penuh (2026-08-18)
+- iter18 13, iter17 8, iter16 16, iter4+flow 55, iter2/6/8/10/15 (batch) — semua hijau.
+- tests/test_iter3_factory_reset.py TIDAK dijalankan: suite destruktif (menjalankan factory reset nyata pada DB preview) dan butuh password Superadmin milik user. Cakupan factory reset dipenuhi oleh tests/_factory_reset_isolated.py (DB + bucket terisolasi, jalur SUCCESS & storage-fail).

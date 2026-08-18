@@ -234,7 +234,7 @@ def test_no_orphan_proof_on_concurrent_admin_payout(su, actors):
 
 
 def test_discarded_proof_object_removed_from_storage(su, actors):
-    """Object dari request yang kalah benar-benar hilang dari storage (bukan hanya dari DB)."""
+    """A. Normal race: object & metadata loser benar-benar hilang, hanya proof winner tersisa."""
     import storage as ST
 
     loan = submit_loan(actors["borrower"], principal=2_300_000)
@@ -242,6 +242,7 @@ def test_discarded_proof_object_removed_from_storage(su, actors):
     dist_id = distribution_of(su, loan["id"])["id"]
 
     objects_before = {o["path"] for o in ST.list_objects(f"{ST.APP_PREFIX}/settlement/")}
+    files_before = MONGO.files.count_documents({"kind": "settlement"})
     with cf.ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: _submit(actors["lender"]["session"], dist_id), range(2)))
     assert sorted(c for c, _ in results) == [200, 409], results
@@ -251,3 +252,87 @@ def test_discarded_proof_object_removed_from_storage(su, actors):
     winner_path = MONGO.files.find_one({"_id": winner})["storage_path"]
     added = objects_after - objects_before
     assert added == {winner_path}, added
+    assert MONGO.files.count_documents({"kind": "settlement"}) == files_before + 1
+    assert MONGO.files.count_documents({"kind": "settlement", "cleanup_pending": True}) == 0
+
+
+def _isolated_discard(kind: str, mode: str) -> dict:
+    """Jalankan _discard_upload di subprocess dengan purge_object yang sengaja dibuat gagal."""
+    script = f'''
+import asyncio, io, json, os, sys
+from dotenv import load_dotenv
+load_dotenv("/app/backend/.env")
+sys.path.insert(0, "/app/backend")
+import storage as ST, profit_routes as PR
+from core import db
+
+class FakeUpload:
+    def __init__(self, name, content, ct="image/png"):
+        self.filename, self.content_type, self._b = name, ct, io.BytesIO(content)
+    async def read(self, size=-1):
+        return self._b.read() if size == -1 else self._b.read(size)
+    async def seek(self, p):
+        self._b.seek(p)
+    async def close(self):
+        self._b.close()
+
+PNG = (b"\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR\\x00\\x00\\x00\\x01\\x00\\x00\\x00\\x01\\x08\\x06\\x00\\x00\\x00"
+       b"\\x1f\\x15\\xc4\\x89\\x00\\x00\\x00\\nIDATx\\x9cc\\x00\\x01\\x00\\x00\\x05\\x00\\x01\\r\\n-\\xb4\\x00\\x00\\x00\\x00IEND\\xaeB`\\x82")
+
+async def main():
+    up = await ST.save_upload(db, FakeUpload("loser.png", PNG), "race-test-user", "{kind}")
+    rec = await db.files.find_one({{"_id": up["file_id"]}})
+    path = rec["storage_path"]
+    if "{mode}" == "fail":
+        def boom(key):
+            raise RuntimeError("simulasi kegagalan hapus object storage")
+        PR.purge_object = boom
+    await PR._discard_upload(up["file_id"])
+    after = await db.files.find_one({{"_id": up["file_id"]}})
+    exists = True
+    try:
+        ST.get_object(path)
+    except Exception:
+        exists = False
+    print("DISCARD_RESULT " + json.dumps({{
+        "file_id": up["file_id"], "path": path, "object_exists": exists,
+        "metadata_exists": after is not None,
+        "is_deleted": (after or {{}}).get("is_deleted"),
+        "cleanup_pending": (after or {{}}).get("cleanup_pending"),
+        "cleanup_error": (after or {{}}).get("cleanup_error"),
+        "cleanup_requested_at": (after or {{}}).get("cleanup_requested_at"),
+    }}))
+
+asyncio.run(main())
+'''
+    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=180)
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    line = [l for l in proc.stdout.splitlines() if l.startswith("DISCARD_RESULT")]
+    assert line, proc.stdout[-2000:]
+    return json.loads(line[-1].split(" ", 1)[1])
+
+
+@pytest.mark.parametrize("kind", ["settlement", "admin_payout"])
+def test_discard_upload_keeps_metadata_when_purge_fails(su, kind):
+    """B. purge_object gagal -> metadata dipertahankan, ditandai cleanup_pending, file tak bisa diakses."""
+    res = _isolated_discard(kind, "fail")
+    assert res["object_exists"] is True, "object memang masih ada karena purge sengaja dibuat gagal"
+    assert res["metadata_exists"] is True, "metadata tidak boleh hilang saat purge gagal"
+    assert res["is_deleted"] is True and res["cleanup_pending"] is True
+    assert res["cleanup_error"] and res["cleanup_requested_at"]
+    # file tidak dapat diakses lewat endpoint terautentikasi
+    assert su.get(f"{API}/files/{res['file_id']}", timeout=30).status_code == 404
+    # bersihkan sisa object test
+    MONGO.files.delete_one({"_id": res["file_id"]})
+    import storage as ST
+    try:
+        ST.purge_object(res["path"])
+    except Exception:
+        pass
+
+
+@pytest.mark.parametrize("kind", ["settlement", "admin_payout"])
+def test_discard_upload_removes_metadata_when_purge_succeeds(kind):
+    res = _isolated_discard(kind, "ok")
+    assert res["object_exists"] is False, "object harus terhapus dari storage"
+    assert res["metadata_exists"] is False, "metadata harus terhapus setelah object benar-benar hilang"

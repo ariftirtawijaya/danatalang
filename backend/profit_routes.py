@@ -98,13 +98,41 @@ async def update_settlement_account(payload: SettlementAccountIn, request: Reque
 
 
 async def _discard_upload(file_id: str):
-    """Hapus permanen file yang gagal dipakai (loser pada race/double-submit) agar tidak orphan."""
-    rec = await db.files.find_one_and_delete({"_id": file_id})
-    if rec and rec.get("storage_path"):
+    """Fail-safe: hapus object storage LEBIH DULU, metadata baru dihapus bila object benar-benar hilang.
+
+    Bila purge gagal, metadata dipertahankan dan ditandai cleanup_pending agar bisa diaudit/di-retry,
+    tetapi file tidak dapat lagi diakses lewat GET /api/files/{id} (is_deleted = true).
+    """
+    rec = await db.files.find_one({"_id": file_id})
+    if not rec:
+        return
+    path = rec.get("storage_path")
+    error = None
+    removed = False
+    if path:
         try:
-            await asyncio.to_thread(purge_object, rec["storage_path"])
-        except Exception:
-            logger.warning("gagal menghapus object orphan %s", rec.get("storage_path"))
+            removed = bool(await asyncio.to_thread(purge_object, path))
+            if not removed:
+                error = "object masih terdeteksi di storage setelah penghapusan"
+        except Exception as e:
+            error = str(e)
+    else:
+        removed = True
+    if removed and not error:
+        await db.files.delete_one({"_id": file_id})
+        return
+    logger.warning("gagal menghapus object orphan %s: %s", path, error)
+    await db.files.update_one(
+        {"_id": file_id},
+        {
+            "$set": {
+                "is_deleted": True,
+                "cleanup_pending": True,
+                "cleanup_error": error,
+                "cleanup_requested_at": iso(now_utc()),
+            }
+        },
+    )
 
 
 # ---------------- distributions ----------------
