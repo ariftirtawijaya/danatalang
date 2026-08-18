@@ -194,7 +194,7 @@ async def get_loan(loan_id: str, user: dict = Depends(get_current_user)):
         if dist:
             try:
                 PS.assert_can_read(dist, user)
-                section["distribution"] = await PS.serialize_distribution(dist)
+                section["distribution"] = await PS.serialize_distribution(dist, viewer=user)
             except HTTPException:
                 section["distribution"] = None
         out["profit_share"] = section

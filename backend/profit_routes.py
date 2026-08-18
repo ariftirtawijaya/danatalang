@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import io
+import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Depends, UploadFile, File, Query, Response
 from pydantic import BaseModel, Field
@@ -8,10 +9,12 @@ from core import (
     db, now_utc, iso, audit, get_settings, get_current_user, require_superadmin, require_lender,
     ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_LENDER,
 )
-from notif import notify_user, notify_admins, rp
-from storage import save_upload
+from notif import notify_user, notify_admins, notify_superadmins, rp
+from storage import save_upload, purge_object
 import loan_service as LS
 import profit_service as PS
+
+logger = logging.getLogger("app")
 
 router = APIRouter(prefix="/api", tags=["profit-sharing"])
 
@@ -94,6 +97,16 @@ async def update_settlement_account(payload: SettlementAccountIn, request: Reque
     return PS.settlement_account(await get_settings())
 
 
+async def _discard_upload(file_id: str):
+    """Hapus permanen file yang gagal dipakai (loser pada race/double-submit) agar tidak orphan."""
+    rec = await db.files.find_one_and_delete({"_id": file_id})
+    if rec and rec.get("storage_path"):
+        try:
+            await asyncio.to_thread(purge_object, rec["storage_path"])
+        except Exception:
+            logger.warning("gagal menghapus object orphan %s", rec.get("storage_path"))
+
+
 # ---------------- distributions ----------------
 def _filters(settlement_status, payout_status, lender_id, admin_id, paid_from, paid_to, include_reversed) -> dict:
     query: dict = {}
@@ -143,7 +156,7 @@ async def export_distributions(
         "is_reversed",
     ])
     async for d in db.profit_distributions.find(query).sort("created_at", -1):
-        item = await PS.serialize_distribution(d)
+        item = await PS.serialize_distribution(d, viewer=user)
         writer.writerow([
             item.get("loan_number"), item.get("paid_at"), item.get("borrower_name"), item.get("lender_name"),
             item.get("admin_name"), item.get("principal"), item.get("interest_realized"), item.get("late_fee_realized"),
@@ -186,7 +199,7 @@ async def list_distributions(
         .limit(page_size)
         .to_list(page_size)
     )
-    items = [await PS.serialize_distribution(d) for d in docs]
+    items = [await PS.serialize_distribution(d, viewer=user) for d in docs]
     if q:
         needle = q.lower()
         items = [
@@ -210,7 +223,7 @@ async def _get_distribution(dist_id: str) -> dict:
 async def get_distribution(dist_id: str, user: dict = Depends(get_current_user)):
     d = await _get_distribution(dist_id)
     PS.assert_can_read(d, user)
-    out = await PS.serialize_distribution(d)
+    out = await PS.serialize_distribution(d, viewer=user)
     if user.get("role") in (ROLE_SUPERADMIN, ROLE_LENDER):
         out["settlement_account"] = PS.settlement_account(await get_settings())
     return out
@@ -266,6 +279,7 @@ async def submit_settlement(
         },
     )
     if res.modified_count == 0:
+        await _discard_upload(up["file_id"])
         raise HTTPException(status_code=409, detail="Setoran bagi hasil ini sudah diproses sebelumnya")
     await audit(
         request, user, "LENDER_SETTLEMENT_SUBMITTED", "profit_distribution", dist_id,
@@ -274,13 +288,13 @@ async def submit_settlement(
         {"lender_settlement_status": PS.SET_PENDING},
         {"lender_settlement_status": PS.SET_WAITING, "attempt": attempt},
     )
-    await notify_admins(
+    await notify_superadmins(
         "loan",
         f"📥 <b>SETORAN BAGI HASIL</b>\n\n{d.get('loan_number')}\nPendana: {user.get('full_name')}\n"
         f"Nominal: {rp(d.get('lender_settlement_due'))}\n\nMenunggu verifikasi Superadmin.",
         "LENDER_SETTLEMENT_SUBMITTED", d.get("loan_id"),
     )
-    return await PS.serialize_distribution(await _get_distribution(dist_id))
+    return await PS.serialize_distribution(await _get_distribution(dist_id), viewer=user)
 
 
 @router.post("/profit-distributions/{dist_id}/settlement/verify")
@@ -331,7 +345,7 @@ async def verify_settlement(dist_id: str, request: Request, user: dict = Depends
             "telah masuk dalam saldo payable Anda.",
             "ADMIN_PAYABLE_READY", d.get("loan_id"),
         )
-    return await PS.serialize_distribution(await _get_distribution(dist_id))
+    return await PS.serialize_distribution(await _get_distribution(dist_id), viewer=user)
 
 
 class ReasonIn(BaseModel):
@@ -380,7 +394,7 @@ async def reject_settlement(dist_id: str, payload: ReasonIn, request: Request, u
             f"Alasan: {payload.reason}\n\nSilakan unggah ulang bukti setoran.",
             "LENDER_SETTLEMENT_REJECTED", d.get("loan_id"),
         )
-    return await PS.serialize_distribution(await _get_distribution(dist_id))
+    return await PS.serialize_distribution(await _get_distribution(dist_id), viewer=user)
 
 
 # ---------------- admin payout ----------------
@@ -425,6 +439,7 @@ async def mark_admin_payout_paid(
         },
     )
     if res.modified_count == 0:
+        await _discard_upload(up["file_id"])
         raise HTTPException(status_code=409, detail="Payout Admin sudah diproses sebelumnya")
     await audit(
         request, user, "ADMIN_PAYOUT_MARKED_PAID", "profit_distribution", dist_id,
@@ -439,7 +454,7 @@ async def mark_admin_payout_paid(
             "telah ditransfer ke rekening Anda.",
             "ADMIN_PAYOUT_MARKED_PAID", d.get("loan_id"),
         )
-    return await PS.serialize_distribution(await _get_distribution(dist_id))
+    return await PS.serialize_distribution(await _get_distribution(dist_id), viewer=user)
 
 
 # ---------------- reversal & koreksi finansial ----------------
@@ -490,7 +505,7 @@ async def reverse_distribution(dist_id: str, payload: ReasonIn, request: Request
          "admin_payout_status": d.get("admin_payout_status")},
         {"is_reversed": True, "reversal_type": "REVERSAL", "reason": payload.reason},
     )
-    return await PS.serialize_distribution(await _get_distribution(dist_id))
+    return await PS.serialize_distribution(await _get_distribution(dist_id), viewer=user)
 
 
 class FinancialCorrectionIn(BaseModel):
@@ -554,4 +569,4 @@ async def financial_correction(dist_id: str, payload: FinancialCorrectionIn, req
         {"is_reversed": True, "reversal_type": "FINANCIAL_CORRECTION", "reason": payload.reason,
          "acknowledged_by": str(user["_id"])},
     )
-    return await PS.serialize_distribution(await _get_distribution(dist_id))
+    return await PS.serialize_distribution(await _get_distribution(dist_id), viewer=user)

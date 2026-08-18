@@ -82,7 +82,8 @@ PNG = (
 
 
 async def main():
-    result = {"db": os.environ["DB_NAME"], "prefix": os.environ["S3_PREFIX"], "storage_mode": None}
+    mode = sys.argv[1] if len(sys.argv) > 1 else "normal"
+    result = {"mode": mode, "db": os.environ["DB_NAME"], "prefix": os.environ["S3_PREFIX"], "storage_mode": None}
     db = core.db
     await core.ensure_indexes()
     result["storage_mode"] = storage.init_storage(force=True)
@@ -151,9 +152,31 @@ async def main():
     assert result["before"]["storage_objects"] >= 2, before_objects
 
     # --- eksekusi Factory Reset (logic asli, prefix & DB terisolasi) ---
+    if mode == "storage-fail":
+        def boom(prefix=None):
+            raise RuntimeError("simulasi kegagalan koneksi object storage")
+
+        admin_routes.purge_prefix = boom
+
     payload = admin_routes.FactoryResetIn(confirmation="HAPUS SEMUA DATA", password=os.environ["SUPERADMIN_PASSWORD"])
     reset = await admin_routes.factory_reset(payload, None, keeper)
     result["reset"] = reset if isinstance(reset, dict) else str(reset)
+
+    if mode == "storage-fail":
+        assert result["reset"]["status"] != "SUCCESS", result["reset"]
+        assert result["reset"]["status"] == "FAILED", result["reset"]
+        assert result["reset"]["storage_ok"] is False
+        assert result["reset"]["storage"].get("error"), result["reset"]["storage"]
+        audit_doc = await db.audit_logs.find_one({"action": "SYSTEM_FACTORY_RESET"})
+        assert audit_doc and audit_doc["new_value"]["status"] == "FAILED", audit_doc
+        assert "GAGAL PADA STORAGE" in audit_doc["description"]
+        result["after"] = {"storage_objects_left": len(storage.list_objects(None))}
+        storage.purge_prefix(None)
+        await core.client.drop_database(os.environ["DB_NAME"])
+        MOTO.stop()
+        result["cleanup"] = "test database dropped, moto s3 stopped"
+        print("FACTORY_RESET_ISOLATED_RESULT " + json.dumps(result))
+        return
 
     after_objects = storage.list_objects(None)
     settings = await core.get_settings()

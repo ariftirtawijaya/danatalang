@@ -87,6 +87,13 @@ async def notify_admins(bot: str, text: str, ntype: str, loan_id=None):
         await send_telegram(bot, u.get("telegram_chat_id"), text, ntype, loan_id, u.get("full_name"))
 
 
+async def notify_superadmins(bot: str, text: str, ntype: str, loan_id=None):
+    """Hanya Superadmin (mis. verifikasi setoran bagi hasil yang memang wewenang Superadmin)."""
+    cursor = db.users.find({"role": "superadmin", "is_active": True, "notify_telegram": True})
+    async for u in cursor:
+        await send_telegram(bot, u.get("telegram_chat_id"), text, ntype, loan_id, u.get("full_name"))
+
+
 async def notify_all_lenders(text: str, ntype: str, loan_id=None):
     cursor = db.users.find({"role": "lender", "is_active": True})
     async for u in cursor:

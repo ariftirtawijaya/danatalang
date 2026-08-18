@@ -7,7 +7,7 @@ dan platform_profit adalah sisa agar total distribusi SELALU = profit_pool.
 
 import uuid
 import logging
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
 from typing import Optional
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
@@ -53,15 +53,31 @@ def share_of(pool: int, percentage) -> int:
     return int((_d(int(pool)) * _d(percentage) / Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+def split_pool(pool: int, percentages: list) -> list:
+    """Largest remainder method: hasil selalu >= 0, deterministik, dan totalnya tepat = pool.
+
+    Bagian bulat dihitung dengan floor, sisa Rupiah dibagikan ke remainder terbesar
+    (tie-break: urutan indeks) sehingga tidak pernah muncul nilai negatif.
+    """
+    pool = int(pool)
+    if pool <= 0:
+        return [0 for _ in percentages]
+    exact = [(_d(int(pool)) * _d(p) / Decimal(100)) for p in percentages]
+    floors = [int(v.to_integral_value(rounding=ROUND_DOWN)) for v in exact]
+    remainder = pool - sum(floors)
+    order = sorted(range(len(exact)), key=lambda i: (-(exact[i] - floors[i]), i))
+    for i in order[:remainder]:
+        floors[i] += 1
+    return floors
+
+
 def compute_distribution(principal: int, interest_realized: int, late_fee_realized: int,
                          lender_pct, admin_pct, platform_pct) -> dict:
     principal = LS.money(principal)
     interest_realized = LS.money(interest_realized)
     late_fee_realized = LS.money(late_fee_realized)
     pool = interest_realized + late_fee_realized
-    lender_profit = share_of(pool, lender_pct)
-    admin_profit = share_of(pool, admin_pct)
-    platform_profit = pool - lender_profit - admin_profit
+    lender_profit, admin_profit, platform_profit = split_pool(pool, [lender_pct, admin_pct, platform_pct])
     return {
         "principal": principal,
         "interest_realized": interest_realized,
@@ -205,7 +221,8 @@ def admin_bank_complete(admin: Optional[dict]) -> bool:
     return bool(admin and admin.get("bank_name") and admin.get("account_number") and admin.get("account_holder"))
 
 
-async def serialize_distribution(d: dict, with_names: bool = True) -> dict:
+async def serialize_distribution(d: dict, with_names: bool = True, viewer: Optional[dict] = None) -> dict:
+    """viewer menentukan visibilitas rekening payout Admin (tidak pernah dikirim ke Pendana)."""
     out = {k: v for k, v in d.items() if k != "_id"}
     out["id"] = str(d["_id"])
     if with_names:
@@ -225,6 +242,12 @@ async def serialize_distribution(d: dict, with_names: bool = True) -> dict:
             if admin
             else None
         )
+        can_see_admin_bank = viewer is not None and (
+            viewer.get("role") == ROLE_SUPERADMIN
+            or (viewer.get("role") == ROLE_ADMIN and d.get("assigned_admin_id") == str(viewer["_id"]))
+        )
+        if not can_see_admin_bank:
+            out.pop("admin_bank", None)
     return out
 
 

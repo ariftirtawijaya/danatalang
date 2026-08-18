@@ -706,29 +706,38 @@ async def factory_reset(payload: FactoryResetIn, request: Request, user: dict = 
     keeper = await _primary_superadmin()
     before = await factory_reset_preview(user)
     storage_result = {"purged": 0, "failed": 0, "remaining_objects": 0, "remaining_bytes": 0}
+    storage_ok = False
     success = False
     try:
         try:
             storage_result = await asyncio.to_thread(purge_prefix, None)
+            storage_ok = (
+                (storage_result.get("failed") or 0) == 0
+                and (storage_result.get("remaining_objects") or 0) == 0
+                and (storage_result.get("remaining_bytes") or 0) == 0
+                and not storage_result.get("error")
+            )
         except Exception as e:
-            storage_result = {"purged": 0, "failed": -1, "error": str(e)}
+            # Exception pada purge storage TIDAK BOLEH pernah dianggap SUCCESS.
+            storage_result = {"purged": 0, "failed": None, "remaining_objects": None,
+                              "remaining_bytes": None, "error": str(e)}
+            storage_ok = False
         for name in set(WIPE_COLLECTIONS):
             await db[name].delete_many({})
         await db.users.delete_many({"_id": {"$ne": keeper["_id"]}})
         await db.settings.delete_many({})
         await db.settings.insert_one(dict(DEFAULT_SETTINGS))
         await db.users.update_one({"_id": keeper["_id"]}, {"$unset": {"must_change_password": ""}})
-        success = (
-            storage_result.get("failed", 0) <= 0
-            and (storage_result.get("remaining_objects") or 0) == 0
-            and (storage_result.get("remaining_bytes") or 0) == 0
-        )
+        success = storage_ok
         await audit(
             request, keeper, "SYSTEM_FACTORY_RESET", "system", "app",
-            f"Factory reset dijalankan oleh {keeper.get('full_name')}. Status: {'BERHASIL' if success else 'SELESAI DENGAN PERINGATAN'}. "
-            f"Objek storage dihapus: {storage_result.get('purged')}, gagal: {storage_result.get('failed')}.",
+            f"Factory reset dijalankan oleh {keeper.get('full_name')}. "
+            f"Status: {'BERHASIL' if success else ('GAGAL PADA STORAGE' if storage_result.get('error') else 'SELESAI DENGAN PERINGATAN')}. "
+            f"Objek storage dihapus: {storage_result.get('purged')}, gagal: {storage_result.get('failed')}."
+            + (f" Error storage: {storage_result.get('error')}" if storage_result.get("error") else ""),
             {"deleted": {k: v for k, v in before.items() if isinstance(v, int)}},
-            {"status": "SUCCESS" if success else "PARTIAL", "storage": storage_result, "kept_superadmin": keeper.get("phone")},
+            {"status": "SUCCESS" if success else ("FAILED" if storage_result.get("error") else "PARTIAL"),
+             "storage": storage_result, "storage_ok": storage_ok, "kept_superadmin": keeper.get("phone")},
         )
     finally:
         await db.system_locks.update_one(
@@ -737,7 +746,8 @@ async def factory_reset(payload: FactoryResetIn, request: Request, user: dict = 
 
     return {
         "ok": True,
-        "status": "SUCCESS" if success else "PARTIAL",
+        "status": "SUCCESS" if success else ("FAILED" if storage_result.get("error") else "PARTIAL"),
+        "storage_ok": storage_ok,
         "deleted": {k: v for k, v in before.items() if isinstance(v, int)},
         "storage": storage_result,
         "kept_superadmin": {"full_name": keeper.get("full_name"), "phone": keeper.get("phone")},

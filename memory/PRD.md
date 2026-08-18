@@ -135,3 +135,11 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 - Dialog Koreksi Finansial (staff/ProfitSharing.jsx) diverifikasi terbuka & validasi tombol (disabled sampai alasan >=20, checkbox ack, dan teks "KOREKSI FINANSIAL" benar).
 - Riwayat setoran per attempt tampil di kartu Superadmin (#1 ditolak + alasan, #2 diverifikasi, tombol Bukti per attempt).
 - Tombol "Tandai Payout Dibayar" disabled bila rekening Admin belum lengkap.
+
+## Update 2026-08-18 — Final hardening 5 temuan tambahan
+1. Factory Reset: storage_ok boolean + status SUCCESS/PARTIAL/FAILED; exception purge -> FAILED (tidak pernah SUCCESS), audit mencatat error.
+2. serialize_distribution(viewer=user): admin_bank hanya untuk Superadmin & Admin pemilik; Pendana tidak menerima rekening Admin.
+3. Notifikasi LENDER_SETTLEMENT_SUBMITTED -> notify_superadmins (Admin biasa tidak lagi menerima); Admin pemilik menerima ADMIN_PAYABLE_READY setelah SETTLED.
+4. Rounding: split_pool() largest remainder (floor + alokasi sisa deterministik) -> tidak pernah negatif, total selalu = profit_pool.
+5. Cleanup orphan proof: _discard_upload() menghapus doc files + object storage untuk request yang kalah (409) pada settlement & admin payout.
+- Test baru iter18: 9 passed. iter17 8, iter16 16, regresi lama 55.
