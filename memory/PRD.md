@@ -184,3 +184,11 @@ Prinsip: **TRANSACTION jika tersedia + IDEMPOTENT RECOVERY sebagai safety net** 
 - P1: seed skenario demo end-to-end agar UI live test bisa klik Buat Setoran Bulk/Kirim Bukti/Verifikasi dengan akun QA.
 - P1: konfirmasi apakah rekening Pendana pada loan detail jalur pembayaran langsung perlu disembunyikan dari Peminjam.
 - P0 (menunggu user): push GitHub & deploy — DITAHAN sesuai instruksi user.
+
+### FINAL FULL REGRESSION pra Save-to-GitHub (iterasi 20)
+- Dijalankan SERIAL (`-n 0`) karena beberapa suite lama berbagi STATE modul dan pecah bila di-shard xdist (bukan bug aplikasi).
+- Hasil: iter20 14, iter19 17, iter18 13, iter17 8, iter16 16, iter15 19, iter10 7, iter8 7 (+1 skip), iter6 11, iter4 7, pinjamku_flow 48, iter2 22 → **189 passed, 1 skipped, 0 failed**.
+- Factory reset terisolasi: mode `normal` SUCCESS & mode `storage-fail` FAILED+aborted_before_db_wipe lalu retry SUCCESS. `test_iter3_factory_reset.py` (destruktif ke DB preview) sengaja TIDAK dijalankan.
+- Skip: `test_iter8_password_change.py::test_must_change_password_flow` — bergantung pada akun asli milik user dalam state must_change_password.
+- Housekeeping environment: 179 record `files` menunjuk object yang hilang bersama restart moto in-memory dihapus (penyebab kegagalan awal iter2 ObjectStorage & iter19 file-privacy). Bukan akibat perubahan kode.
+- `transaction_supported()` di-cache pada variabel modul `_tx_supported` (probe hanya sekali per proses, first-use); log konfirmasi 1 baris probe per proses backend.
