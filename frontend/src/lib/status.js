@@ -71,6 +71,7 @@ export const ACTION_LABELS = {
   LENDER_SETTLEMENT_REJECTED: "Setoran Bagi Hasil Ditolak",
   ADMIN_PAYOUT_MARKED_PAID: "Payout Admin Ditandai Dibayar",
   PROFIT_DISTRIBUTION_REVERSED: "Pembagian Hasil Dibatalkan",
+  PROFIT_DISTRIBUTION_CORRECTED: "Koreksi Finansial Pembagian Hasil",
   SYSTEM_FACTORY_RESET: "Factory Reset Sistem",
 };
 

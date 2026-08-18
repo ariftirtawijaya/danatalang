@@ -122,3 +122,16 @@ Aplikasi web PWA manajemen pinjaman uang, berfungsi end-to-end (bukan mockup), 4
 ### Status testing
 - Backend pytest: 16/16 lulus (settings, snapshot, assignment, kalkulasi, rounding, freeze denda, double-verify, RBAC, settlement, reject, payout, file RBAC, legacy, reversal, index).
 - Regresi lama: 55/55 lulus. Frontend E2E iteration_16.json: 0 bug UI.
+
+## Update 2026-08-18 — Hardening bagi hasil (final verification sebelum push)
+- Reversal guard: reverse hanya untuk settlement PENDING & payout != PAID; WAITING/SETTLED/PAID -> 409. Endpoint baru POST /api/profit-distributions/{id}/financial-correction (Superadmin, reason >=20, confirmation "KOREKSI FINANSIAL", acknowledge_funds_moved) + audit PROFIT_DISTRIBUTION_CORRECTED.
+- Rekening payout Admin memakai field user existing bank_name/account_number/account_holder; payout diblokir 409 bila belum lengkap, UI menampilkan rekening + tombol disabled.
+- settlement_attempts kini array attempt immutable (attempt_no, amount, proof_file_id, submitted_*, status SUBMITTED/REJECTED/VERIFIED, rejection_reason, verified_*) + settlement_attempt_count.
+- Factory Reset integration test terisolasi: tests/_factory_reset_isolated.py (DB fr_isolated_*, bucket+prefix moto S3 khusus test) dipanggil dari tests/test_iter17_profit_hardening.py.
+- Catatan environment preview: MinIO pod lama tidak ada; tests/_preview_s3_server.py (moto) dijalankan di 127.0.0.1:9100 agar upload preview berfungsi. Produksi tetap Cloudflare R2.
+- Test: iter17 8/8, iter16 16/16, regresi lama 55/55.
+
+### Catatan UI hardening (2026-08-18)
+- Dialog Koreksi Finansial (staff/ProfitSharing.jsx) diverifikasi terbuka & validasi tombol (disabled sampai alasan >=20, checkbox ack, dan teks "KOREKSI FINANSIAL" benar).
+- Riwayat setoran per attempt tampil di kartu Superadmin (#1 ditolak + alasan, #2 diverifikasi, tombol Bukti per attempt).
+- Tombol "Tandai Payout Dibayar" disabled bila rekening Admin belum lengkap.

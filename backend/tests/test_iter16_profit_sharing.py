@@ -389,7 +389,7 @@ def test_i_to_l_settlement_and_payout_flow(su, actors, paid_with_late_fee):
     assert r.json()["settlement_rejection_reason"] == "Nominal setoran tidak sesuai catatan"
     assert MONGO.audit_logs.find_one({"action": "LENDER_SETTLEMENT_REJECTED", "entity_id": dist_id})
     r = actors["lender"]["session"].post(f"{API}/profit-distributions/{dist_id}/settlement", files=proof_files(), timeout=60)
-    assert r.status_code == 200 and r.json()["settlement_attempts"] == 2
+    assert r.status_code == 200 and r.json()["settlement_attempt_count"] == 2
 
     # verify -> SETTLED + payout PENDING
     r = su.post(f"{API}/profit-distributions/{dist_id}/settlement/verify", timeout=30)

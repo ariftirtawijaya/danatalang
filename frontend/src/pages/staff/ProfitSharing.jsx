@@ -43,7 +43,30 @@ function DistCard({ d, children, testId }) {
       {d.settlement_rejection_reason && (
         <p className="mt-4 text-sm text-destructive">Penolakan terakhir: {d.settlement_rejection_reason}</p>
       )}
-      {d.reversal_reason && <p className="mt-3 text-sm text-destructive">Reversal: {d.reversal_reason}</p>}
+      {d.reversal_reason && (
+        <p className="mt-3 text-sm text-destructive">
+          {d.reversal_type === "FINANCIAL_CORRECTION" ? "Koreksi finansial" : "Reversal"}: {d.reversal_reason}
+        </p>
+      )}
+      {d.settlement_attempts?.length > 0 && (
+        <div className="mt-5 rounded-xl border p-4" data-testid={`attempts-${d.id}`}>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Riwayat Setoran</p>
+          <div className="mt-3 space-y-3">
+            {d.settlement_attempts.map((a) => (
+              <div key={a.attempt_no} className="flex flex-wrap items-center gap-3 text-xs" data-testid={`attempt-${d.id}-${a.attempt_no}`}>
+                <span className="font-semibold">#{a.attempt_no}</span>
+                <span className="text-muted-foreground">{formatDateTime(a.submitted_at)}</span>
+                <span className="num">{rupiah(a.amount)}</span>
+                <ShareBadge value={a.status === "VERIFIED" ? "SETTLED" : a.status === "REJECTED" ? "PENDING" : "WAITING_VERIFICATION"} />
+                <span className={a.status === "REJECTED" ? "text-destructive" : "text-muted-foreground"}>
+                  {a.status === "REJECTED" ? `Ditolak: ${a.rejection_reason}` : a.status === "VERIFIED" ? "Diverifikasi" : "Dikirim"}
+                </span>
+                <ProofImage fileId={a.proof_file_id} label={`Bukti #${a.attempt_no}`} testId={`attempt-proof-${d.id}-${a.attempt_no}`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mt-5 flex flex-wrap items-center gap-2">
         {children}
         <Button variant="ghost" className="rounded-full" onClick={() => navigate(`/loans/${d.loan_id}`)}>
@@ -59,6 +82,9 @@ export default function ProfitSharing() {
   const [rejectTarget, setRejectTarget] = useState(null);
   const [payoutTarget, setPayoutTarget] = useState(null);
   const [reverseTarget, setReverseTarget] = useState(null);
+  const [correctionTarget, setCorrectionTarget] = useState(null);
+  const [ackFunds, setAckFunds] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [filters, setFilters] = useState({ paid_from: "", paid_to: "", q: "" });
@@ -89,6 +115,9 @@ export default function ProfitSharing() {
       setRejectTarget(null);
       setPayoutTarget(null);
       setReverseTarget(null);
+      setCorrectionTarget(null);
+      setAckFunds(false);
+      setConfirmText("");
       setReason("");
       setFile(null);
       await refreshAll();
@@ -196,6 +225,11 @@ export default function ProfitSharing() {
                   {settled.data.items.map((d) => (
                     <DistCard key={d.id} d={d} testId={`settled-card-${d.id}`}>
                       <ProofImage fileId={d.settlement_proof_file_id} label="Lihat Bukti Setoran" testId={`settled-proof-${d.id}`} />
+                      {!d.is_reversed && (
+                        <Button data-testid={`correction-btn-${d.id}`} variant="outline" className="rounded-full" onClick={() => setCorrectionTarget(d)}>
+                          Koreksi Finansial
+                        </Button>
+                      )}
                     </DistCard>
                   ))}
                 </div>
@@ -213,11 +247,13 @@ export default function ProfitSharing() {
                   {payoutPending.data.items.map((d) => (
                     <DistCard key={d.id} d={d} testId={`payout-card-${d.id}`}>
                       {d.admin_bank && (
-                        <span className="rounded-xl bg-muted px-4 py-2 text-xs text-muted-foreground">
+                        <span className={`rounded-xl px-4 py-2 text-xs ${d.admin_bank.complete ? "bg-muted text-muted-foreground" : "bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-300"}`}
+                              data-testid={`admin-bank-${d.id}`}>
                           Rekening Admin: {d.admin_bank.bank_name || "-"} · {d.admin_bank.account_number || "belum diisi"} · {d.admin_bank.account_holder || "-"}
+                          {!d.admin_bank.complete && " — belum lengkap, payout diblokir"}
                         </span>
                       )}
-                      <Button data-testid={`mark-payout-btn-${d.id}`} className="rounded-full" onClick={() => setPayoutTarget(d)}>
+                      <Button data-testid={`mark-payout-btn-${d.id}`} className="rounded-full" disabled={!d.admin_bank?.complete} onClick={() => setPayoutTarget(d)}>
                         Tandai Payout Dibayar
                       </Button>
                     </DistCard>
@@ -332,6 +368,40 @@ export default function ProfitSharing() {
             <Button data-testid="reverse-submit-btn" variant="destructive" disabled={busy || reason.trim().length < 10}
               onClick={() => run(() => api.post(`/profit-distributions/${reverseTarget.id}/reverse`, { reason }), "Pembagian hasil dibatalkan")}>
               {busy ? "Memproses..." : "Batalkan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!correctionTarget} onOpenChange={() => { setCorrectionTarget(null); setReason(""); setAckFunds(false); setConfirmText(""); }}>
+        <DialogContent data-testid="correction-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-heading">Koreksi Finansial Eksplisit</DialogTitle>
+            <DialogDescription>
+              Dipakai hanya bila uang sudah benar-benar berpindah (setoran diterima dan/atau payout dibayar).
+              Histori finansial tidak dihapus; penyelesaian uang fisik tetap manual di luar aplikasi. Alasan minimal 20 karakter.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Textarea data-testid="correction-reason" rows={4} value={reason} onChange={(e) => setReason(e.target.value)}
+              placeholder="Jelaskan koreksi yang dilakukan beserta rencana penyelesaian dana secara manual..." />
+            <label className="flex items-start gap-3 text-xs text-muted-foreground">
+              <input data-testid="correction-ack" type="checkbox" checked={ackFunds} onChange={(e) => setAckFunds(e.target.checked)} className="mt-0.5" />
+              Saya menyatakan penyelesaian uang fisik ditangani manual di luar aplikasi.
+            </label>
+            <div className="space-y-2">
+              <Label>Ketik persis: KOREKSI FINANSIAL</Label>
+              <Input data-testid="correction-confirmation" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className="h-11 rounded-xl" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCorrectionTarget(null)} disabled={busy}>Batal</Button>
+            <Button data-testid="correction-submit-btn" variant="destructive"
+              disabled={busy || reason.trim().length < 20 || !ackFunds || confirmText.trim() !== "KOREKSI FINANSIAL"}
+              onClick={() => run(() => api.post(`/profit-distributions/${correctionTarget.id}/financial-correction`, {
+                reason, confirmation: confirmText, acknowledge_funds_moved: ackFunds,
+              }), "Koreksi finansial dicatat")}>
+              {busy ? "Memproses..." : "Catat Koreksi"}
             </Button>
           </DialogFooter>
         </DialogContent>

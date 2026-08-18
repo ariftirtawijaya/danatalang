@@ -160,7 +160,8 @@ async def ensure_profit_distribution_for_paid_loan(loan: dict, payment: Optional
         "settlement_rejected_at": None,
         "settlement_rejected_by": None,
         "settlement_rejection_reason": None,
-        "settlement_attempts": 0,
+        "settlement_attempt_count": 0,
+        "settlement_attempts": [],
         "admin_payout_status": PAYOUT_NOT_READY,
         "admin_payout_amount": calc["admin_profit"],
         "admin_payout_proof_file_id": None,
@@ -200,6 +201,10 @@ async def ensure_profit_distribution_for_paid_loan(loan: dict, payment: Optional
     return doc
 
 
+def admin_bank_complete(admin: Optional[dict]) -> bool:
+    return bool(admin and admin.get("bank_name") and admin.get("account_number") and admin.get("account_holder"))
+
+
 async def serialize_distribution(d: dict, with_names: bool = True) -> dict:
     out = {k: v for k, v in d.items() if k != "_id"}
     out["id"] = str(d["_id"])
@@ -215,6 +220,7 @@ async def serialize_distribution(d: dict, with_names: bool = True) -> dict:
                 "bank_name": admin.get("bank_name"),
                 "account_number": admin.get("account_number"),
                 "account_holder": admin.get("account_holder"),
+                "complete": admin_bank_complete(admin),
             }
             if admin
             else None

@@ -236,27 +236,43 @@ async def submit_settlement(
         {"_id": up["file_id"]},
         {"$set": {"loan_id": d.get("loan_id"), "profit_distribution_id": dist_id}},
     )
+    now = iso(now_utc())
+    attempt = {
+        "attempt_no": int(d.get("settlement_attempt_count") or 0) + 1,
+        "amount": LS.money(d.get("lender_settlement_due")),
+        "proof_file_id": up["file_id"],
+        "submitted_at": now,
+        "submitted_by": str(user["_id"]),
+        "status": "SUBMITTED",
+        "rejected_at": None,
+        "rejected_by": None,
+        "rejection_reason": None,
+        "verified_at": None,
+        "verified_by": None,
+    }
     res = await db.profit_distributions.update_one(
         {"_id": dist_id, "lender_settlement_status": PS.SET_PENDING},
         {
             "$set": {
                 "lender_settlement_status": PS.SET_WAITING,
                 "settlement_proof_file_id": up["file_id"],
-                "settlement_submitted_at": iso(now_utc()),
+                "settlement_submitted_at": now,
                 "settlement_submitted_by": str(user["_id"]),
                 "settlement_rejection_reason": None,
-                "updated_at": iso(now_utc()),
+                "updated_at": now,
             },
-            "$inc": {"settlement_attempts": 1},
+            "$push": {"settlement_attempts": attempt},
+            "$inc": {"settlement_attempt_count": 1},
         },
     )
     if res.modified_count == 0:
         raise HTTPException(status_code=409, detail="Setoran bagi hasil ini sudah diproses sebelumnya")
     await audit(
         request, user, "LENDER_SETTLEMENT_SUBMITTED", "profit_distribution", dist_id,
-        f"Setoran bagi hasil {d.get('loan_number')} sebesar {rp(d.get('lender_settlement_due'))} dilaporkan Pendana",
+        f"Setoran bagi hasil {d.get('loan_number')} sebesar {rp(d.get('lender_settlement_due'))} dilaporkan Pendana "
+        f"(attempt #{attempt['attempt_no']})",
         {"lender_settlement_status": PS.SET_PENDING},
-        {"lender_settlement_status": PS.SET_WAITING, "amount": LS.money(d.get("lender_settlement_due"))},
+        {"lender_settlement_status": PS.SET_WAITING, "attempt": attempt},
     )
     await notify_admins(
         "loan",
@@ -271,6 +287,7 @@ async def submit_settlement(
 async def verify_settlement(dist_id: str, request: Request, user: dict = Depends(require_superadmin)):
     d = await _get_distribution(dist_id)
     now = iso(now_utc())
+    last = int(d.get("settlement_attempt_count") or 0) - 1
     res = await db.profit_distributions.update_one(
         {"_id": dist_id, "lender_settlement_status": PS.SET_WAITING},
         {
@@ -280,6 +297,15 @@ async def verify_settlement(dist_id: str, request: Request, user: dict = Depends
                 "settlement_verified_by": str(user["_id"]),
                 "admin_payout_status": PS.PAYOUT_PENDING,
                 "updated_at": now,
+                **(
+                    {
+                        f"settlement_attempts.{last}.status": "VERIFIED",
+                        f"settlement_attempts.{last}.verified_at": now,
+                        f"settlement_attempts.{last}.verified_by": str(user["_id"]),
+                    }
+                    if last >= 0
+                    else {}
+                ),
             }
         },
     )
@@ -316,6 +342,7 @@ class ReasonIn(BaseModel):
 async def reject_settlement(dist_id: str, payload: ReasonIn, request: Request, user: dict = Depends(require_superadmin)):
     d = await _get_distribution(dist_id)
     now = iso(now_utc())
+    last = int(d.get("settlement_attempt_count") or 0) - 1
     res = await db.profit_distributions.update_one(
         {"_id": dist_id, "lender_settlement_status": PS.SET_WAITING},
         {
@@ -325,6 +352,16 @@ async def reject_settlement(dist_id: str, payload: ReasonIn, request: Request, u
                 "settlement_rejected_by": str(user["_id"]),
                 "settlement_rejection_reason": payload.reason,
                 "updated_at": now,
+                **(
+                    {
+                        f"settlement_attempts.{last}.status": "REJECTED",
+                        f"settlement_attempts.{last}.rejected_at": now,
+                        f"settlement_attempts.{last}.rejected_by": str(user["_id"]),
+                        f"settlement_attempts.{last}.rejection_reason": payload.reason,
+                    }
+                    if last >= 0
+                    else {}
+                ),
             }
         },
     )
@@ -361,6 +398,13 @@ async def mark_admin_payout_paid(
         raise HTTPException(status_code=409, detail="Setoran Pendana belum diterima, payout Admin belum dapat dibayarkan")
     if d.get("admin_payout_status") == PS.PAYOUT_PAID:
         raise HTTPException(status_code=409, detail="Payout Admin sudah ditandai dibayar")
+    admin = await db.users.find_one({"_id": d.get("assigned_admin_id")}) if d.get("assigned_admin_id") else None
+    if not PS.admin_bank_complete(admin):
+        raise HTTPException(
+            status_code=409,
+            detail="Rekening payout Admin belum lengkap (bank, nomor rekening, dan atas nama wajib diisi). "
+                   "Lengkapi data Admin terlebih dahulu sebelum menandai payout dibayar.",
+        )
     up = await save_upload(db, proof, str(user["_id"]), "admin_payout")
     await db.files.update_one(
         {"_id": up["file_id"]},
@@ -398,16 +442,85 @@ async def mark_admin_payout_paid(
     return await PS.serialize_distribution(await _get_distribution(dist_id))
 
 
-# ---------------- reversal ----------------
+# ---------------- reversal & koreksi finansial ----------------
 @router.post("/profit-distributions/{dist_id}/reverse")
 async def reverse_distribution(dist_id: str, payload: ReasonIn, request: Request, user: dict = Depends(require_superadmin)):
+    """Reversal sederhana: HANYA untuk distribusi yang belum ada perpindahan uang tercatat."""
     d = await _get_distribution(dist_id)
     if d.get("is_reversed"):
         raise HTTPException(status_code=409, detail="Pembagian hasil ini sudah dibatalkan sebelumnya")
     if d.get("admin_payout_status") == PS.PAYOUT_PAID:
         raise HTTPException(
             status_code=409,
-            detail="Payout Admin sudah dibayarkan. Koreksi harus diselesaikan secara manual di luar aplikasi terlebih dahulu.",
+            detail="Payout Admin sudah DIBAYAR. Reversal biasa tidak diizinkan. Gunakan Koreksi Finansial "
+                   "eksplisit (POST /profit-distributions/{id}/financial-correction) dengan alasan dan konfirmasi.",
+        )
+    if d.get("lender_settlement_status") == PS.SET_SETTLED:
+        raise HTTPException(
+            status_code=409,
+            detail="Setoran Pendana sudah DITERIMA. Reversal biasa tidak diizinkan karena uang sudah benar-benar masuk. "
+                   "Gunakan Koreksi Finansial eksplisit dengan alasan dan konfirmasi.",
+        )
+    if d.get("lender_settlement_status") == PS.SET_WAITING:
+        raise HTTPException(
+            status_code=409,
+            detail="Setoran Pendana sedang menunggu verifikasi. Tolak setoran tersebut terlebih dahulu sebelum reversal.",
+        )
+    now = iso(now_utc())
+    res = await db.profit_distributions.update_one(
+        {"_id": dist_id, "is_reversed": {"$ne": True}, "lender_settlement_status": PS.SET_PENDING,
+         "admin_payout_status": {"$ne": PS.PAYOUT_PAID}},
+        {
+            "$set": {
+                "is_reversed": True,
+                "reversed_at": now,
+                "reversed_by": str(user["_id"]),
+                "reversal_reason": payload.reason,
+                "reversal_type": "REVERSAL",
+                "updated_at": now,
+            }
+        },
+    )
+    if res.modified_count == 0:
+        raise HTTPException(status_code=409, detail="Pembagian hasil ini tidak dapat dibatalkan pada status saat ini")
+    await audit(
+        request, user, "PROFIT_DISTRIBUTION_REVERSED", "profit_distribution", dist_id,
+        f"Pembagian hasil {d.get('loan_number')} dibatalkan (reversal, belum ada perpindahan uang tercatat): {payload.reason}",
+        {"is_reversed": False, "lender_settlement_status": d.get("lender_settlement_status"),
+         "admin_payout_status": d.get("admin_payout_status")},
+        {"is_reversed": True, "reversal_type": "REVERSAL", "reason": payload.reason},
+    )
+    return await PS.serialize_distribution(await _get_distribution(dist_id))
+
+
+class FinancialCorrectionIn(BaseModel):
+    reason: str = Field(min_length=20, max_length=1000)
+    confirmation: str
+    acknowledge_funds_moved: bool = False
+
+
+@router.post("/profit-distributions/{dist_id}/financial-correction")
+async def financial_correction(dist_id: str, payload: FinancialCorrectionIn, request: Request,
+                              user: dict = Depends(require_superadmin)):
+    """Koreksi finansial eksplisit untuk distribusi yang sudah SETTLED / payout PAID.
+
+    Tidak menghapus histori apa pun; distribusi ditandai dikoreksi dan dikeluarkan dari laporan aktif,
+    penyelesaian uang fisik tetap dilakukan manual di luar aplikasi.
+    """
+    d = await _get_distribution(dist_id)
+    if payload.confirmation.strip() != "KOREKSI FINANSIAL":
+        raise HTTPException(status_code=400, detail="Ketik persis: KOREKSI FINANSIAL")
+    if not payload.acknowledge_funds_moved:
+        raise HTTPException(
+            status_code=400,
+            detail="Konfirmasi wajib: Superadmin harus menyatakan bahwa penyelesaian uang fisik ditangani manual di luar aplikasi.",
+        )
+    if d.get("is_reversed"):
+        raise HTTPException(status_code=409, detail="Pembagian hasil ini sudah dibatalkan/dikoreksi sebelumnya")
+    if d.get("lender_settlement_status") != PS.SET_SETTLED and d.get("admin_payout_status") != PS.PAYOUT_PAID:
+        raise HTTPException(
+            status_code=409,
+            detail="Belum ada perpindahan uang tercatat. Gunakan reversal biasa untuk kasus ini.",
         )
     now = iso(now_utc())
     res = await db.profit_distributions.update_one(
@@ -418,16 +531,27 @@ async def reverse_distribution(dist_id: str, payload: ReasonIn, request: Request
                 "reversed_at": now,
                 "reversed_by": str(user["_id"]),
                 "reversal_reason": payload.reason,
+                "reversal_type": "FINANCIAL_CORRECTION",
+                "correction_settlement_status_at_correction": d.get("lender_settlement_status"),
+                "correction_payout_status_at_correction": d.get("admin_payout_status"),
                 "updated_at": now,
             }
         },
     )
     if res.modified_count == 0:
-        raise HTTPException(status_code=409, detail="Pembagian hasil ini sudah dibatalkan sebelumnya")
+        raise HTTPException(status_code=409, detail="Pembagian hasil ini sudah dibatalkan/dikoreksi sebelumnya")
     await audit(
-        request, user, "PROFIT_DISTRIBUTION_REVERSED", "profit_distribution", dist_id,
-        f"Pembagian hasil {d.get('loan_number')} dibatalkan (reversal): {payload.reason}",
-        {"is_reversed": False, "lender_settlement_status": d.get("lender_settlement_status")},
-        {"is_reversed": True, "reason": payload.reason},
+        request, user, "PROFIT_DISTRIBUTION_CORRECTED", "profit_distribution", dist_id,
+        f"KOREKSI FINANSIAL EKSPLISIT pada {d.get('loan_number')} (setoran: {d.get('lender_settlement_status')}, "
+        f"payout: {d.get('admin_payout_status')}). Penyelesaian uang fisik manual di luar aplikasi. Alasan: {payload.reason}",
+        {
+            "lender_settlement_status": d.get("lender_settlement_status"),
+            "admin_payout_status": d.get("admin_payout_status"),
+            "lender_settlement_due": LS.money(d.get("lender_settlement_due")),
+            "admin_profit": LS.money(d.get("admin_profit")),
+            "platform_profit": LS.money(d.get("platform_profit")),
+        },
+        {"is_reversed": True, "reversal_type": "FINANCIAL_CORRECTION", "reason": payload.reason,
+         "acknowledged_by": str(user["_id"])},
     )
     return await PS.serialize_distribution(await _get_distribution(dist_id))
