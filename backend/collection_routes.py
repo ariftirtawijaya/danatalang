@@ -118,6 +118,7 @@ async def collect_payment(
                 "late_days_final": snap["late_days_snapshot"],
                 "late_fee_final": snap["late_fee_snapshot"],
                 "actual_payment_amount": snap["total_collected"],
+                "collection_payment_id": payment_id,      # korelasi eksplisit pengklaim loan
             }}, session=session,
         )
         if res.modified_count == 0:
@@ -127,10 +128,15 @@ async def collect_payment(
     try:
         await CS.atomic(_op)
     except Exception:
-        # bersihkan jejak PENDING agar pinjaman tidak terkunci; recovery tetap jadi safety net
-        await db.payments.delete_one({"_id": payment_id, "commit_state": CS.COMMIT_PENDING})
-        if upload:
-            await _discard_upload(upload["file_id"])
+        # Jika payment ini SUDAH berhasil mengklaim loan, jangan pernah hapus recordnya:
+        # invariant "tidak ada loan PAYMENT_COLLECTED tanpa payment" harus tetap terjaga.
+        claimed = await db.loans.find_one({"_id": loan_id, "collection_payment_id": payment_id})
+        if claimed:
+            await CS.recover_pending_collections(user, request, payment_id=payment_id)
+        else:
+            await db.payments.delete_one({"_id": payment_id, "commit_state": CS.COMMIT_PENDING})
+            if upload:
+                await _discard_upload(upload["file_id"])
         raise
     if upload:
         await db.files.update_one({"_id": upload["file_id"]}, {"$set": {"loan_id": loan_id, "payment_id": payment_id}})
@@ -255,7 +261,7 @@ async def reverse_collection(payment_id: str, payload: ReverseCollectionIn, requ
     await db.loans.update_one({"_id": p["loan_id"]}, {
         "$set": {"status": new_status},
         "$unset": {"collected_at": "", "collected_by": "", "late_days_final": "", "late_fee_final": "",
-                   "actual_payment_amount": ""},
+                   "actual_payment_amount": "", "collection_payment_id": ""},
     })
     await LS.record_status(p["loan_id"], LS.S_COLLECTED, new_status, user, f"Pembatalan penerimaan: {payload.reason}")
     await audit(request, user, "ADMIN_COLLECTION_REVERSED", "payment", payment_id,

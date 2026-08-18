@@ -113,19 +113,31 @@ async def recover_pending_collections(actor=None, request=None, payment_id: Opti
         age = (now_utc() - parse_dt(p.get("created_at"))).total_seconds() if p.get("created_at") else 1e9
         if not payment_id and age < stale_seconds:
             continue
+        pid = str(p["_id"])
         loan = await db.loans.find_one({"_id": p.get("loan_id")})
-        if loan and loan["status"] in (LS.S_ACTIVE, LS.S_OVERDUE, LS.S_COLLECTED):
+        claimer = (loan or {}).get("collection_payment_id")
+        # Deterministik: hanya payment yang benar-benar mengklaim loan boleh di-forward.
+        # Loser concurrent (claimer != pid) TIDAK pernah dianggap valid.
+        can_claim = bool(loan) and claimer is None and loan["status"] in (LS.S_ACTIVE, LS.S_OVERDUE)
+        if loan and (claimer == pid or can_claim):
             if loan["status"] != LS.S_COLLECTED:
-                await db.loans.update_one(
-                    {"_id": loan["_id"], "status": {"$in": [LS.S_ACTIVE, LS.S_OVERDUE]}},
+                res = await db.loans.update_one(
+                    {"_id": loan["_id"], "status": {"$in": [LS.S_ACTIVE, LS.S_OVERDUE]},
+                     "collection_payment_id": {"$in": [None, pid]}},
                     {"$set": {"status": LS.S_COLLECTED, "collected_at": p.get("collected_at"),
                               "collected_by": p.get("collector_admin_id"),
+                              "collection_payment_id": pid,
                               "late_days_final": p.get("late_days_snapshot") or 0,
                               "late_fee_final": LS.money(p.get("late_fee_snapshot")),
                               "actual_payment_amount": LS.money(p.get("total_collected"))}})
+                if res.modified_count == 0 and (
+                        await db.loans.find_one({"_id": loan["_id"], "collection_payment_id": pid})) is None:
+                    continue   # kalah race saat recovery; biarkan iterasi berikutnya meng-abort
                 await LS.record_status(loan["_id"], loan["status"], LS.S_COLLECTED, actor,
                                        f"Recovery: penerimaan {p.get('collection_number')} dilanjutkan")
-            await db.payments.update_one({"_id": str(p["_id"]), "commit_state": COMMIT_PENDING},
+            elif claimer != pid:
+                continue
+            await db.payments.update_one({"_id": pid, "commit_state": COMMIT_PENDING},
                                          {"$set": {"commit_state": COMMIT_DONE}})
             committed += 1
             await audit(request, actor, "ADMIN_COLLECTION_RECOVERED", "payment", str(p["_id"]),

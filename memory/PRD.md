@@ -192,3 +192,11 @@ Prinsip: **TRANSACTION jika tersedia + IDEMPOTENT RECOVERY sebagai safety net** 
 - Skip: `test_iter8_password_change.py::test_must_change_password_flow` — bergantung pada akun asli milik user dalam state must_change_password.
 - Housekeeping environment: 179 record `files` menunjuk object yang hilang bersama restart moto in-memory dihapus (penyebab kegagalan awal iter2 ObjectStorage & iter19 file-privacy). Bukan akibat perubahan kode.
 - `transaction_supported()` di-cache pada variabel modul `_tx_supported` (probe hanya sekali per proses, first-use); log konfirmasi 1 baris probe per proses backend.
+
+### Crash-consistency fix collect_payment fallback (iterasi 20b)
+- Loan kini menyimpan korelasi eksplisit `collection_payment_id = payment_id` saat conditional update ACTIVE/OVERDUE → PAYMENT_COLLECTED.
+- Exception handler collect: bila `loan.collection_payment_id == payment_id` payment PENDING TIDAK dihapus (dijalankan recovery idempoten menjadi COMMITTED); hanya bila klaim tidak pernah berhasil payment PENDING dihapus + bukti di-discard fail-safe.
+- `recover_pending_collections()` deterministik: forward hanya bila `claimer == payment_id` (atau loan belum diklaim & masih ACTIVE/OVERDUE, dengan conditional update `collection_payment_id ∈ {None, pid}`); loser concurrent selalu di-ABORT/REVERSED walau loan sudah PAYMENT_COLLECTED oleh request lain.
+- Reversal koleksi meng-unset `collection_payment_id` sehingga loan dapat di-collect ulang tanpa konflik; status PAID tetap mempertahankan korelasi sebagai referensi audit.
+- Test iter20 menjadi 18: +crash tepat saat mark COMMITTED (payment tidak hilang, snapshot & COL tidak berubah/duplikat), +concurrent loser tidak pernah commit, +reversal unset korelasi & collect ulang, +invariant global korelasi loan↔payment.
+- Regresi final serial: iter20 18, iter19 17, iter18 13, iter17 8, iter16 16, iter15 19, iter10 7, iter8 7(+1 skip), iter6 11, iter4 7, pinjamku_flow 48, iter2 22 → 193 passed / 0 failed / 1 skipped; factory reset terisolasi normal SUCCESS + storage-fail FAILED→retry SUCCESS.
