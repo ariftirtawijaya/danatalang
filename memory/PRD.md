@@ -200,3 +200,11 @@ Prinsip: **TRANSACTION jika tersedia + IDEMPOTENT RECOVERY sebagai safety net** 
 - Reversal koleksi meng-unset `collection_payment_id` sehingga loan dapat di-collect ulang tanpa konflik; status PAID tetap mempertahankan korelasi sebagai referensi audit.
 - Test iter20 menjadi 18: +crash tepat saat mark COMMITTED (payment tidak hilang, snapshot & COL tidak berubah/duplikat), +concurrent loser tidak pernah commit, +reversal unset korelasi & collect ulang, +invariant global korelasi loan↔payment.
 - Regresi final serial: iter20 18, iter19 17, iter18 13, iter17 8, iter16 16, iter15 19, iter10 7, iter8 7(+1 skip), iter6 11, iter4 7, pinjamku_flow 48, iter2 22 → 193 passed / 0 failed / 1 skipped; factory reset terisolasi normal SUCCESS + storage-fail FAILED→retry SUCCESS.
+
+### HOTFIX ProofImage blob URL (iterasi 21)
+- Root cause: `useEffect` di `ProofImage` (frontend/src/components/common.jsx) memakai dependency `[open, fileId, url]`; `setUrl(objectUrl)` mengubah `url` → effect re-run → cleanup merevoke blob URL yang baru dibuat → `<img>`/link PDF memakai blob invalid → `net::ERR_FILE_NOT_FOUND`.
+- Fix: dependency `[open, fileId]` + cancellation guard (`cancelled`), `setUrl(null)` saat effect mulai, revoke hanya pada unmount / `fileId` berubah / tampilan ditutup. Backend, storage, dan file production TIDAK disentuh.
+- Test baru `tests/test_iter21_proof_files.py` (6): upload+fetch proof PNG/JPEG/WEBP/PDF (content-type & Cache-Control private), `GET /api/files/{id}` 401 tanpa auth & token palsu, 403 untuk pendana tak terkait, 200 untuk peminjam/pendana pemilik, file existing tetap terlayani.
+- Verifikasi UI: WEBP 120x80, JPEG 120x80, PDF blob link valid, reload+buka ulang tetap tampil, blob direvoke setelah unmount (tidak leak). Testing agent iteration_18.json: 0 `ERR_FILE_NOT_FOUND` di /loans/{id}, /payments (staff), /collections, /profit-sharing (settlement & payout). Path lender `/admin-remittance` & lender `/payments` tidak punya data QA (komponen identik).
+- Regresi: iter21 6, iter20 18, iter19 17, pinjamku_flow 48, iter2 22, iter15 19 — semua hijau.
+- Catatan: ProofImage belum punya tombol "Tutup" (usulan reviewer, belum diminta user).

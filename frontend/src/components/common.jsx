@@ -110,22 +110,30 @@ export function ProofImage({ fileId, label = "Lihat Bukti", testId }) {
   const [open, setOpen] = useState(false);
   const [isPdf, setIsPdf] = useState(false);
 
+  // Blob URL hanya direvoke saat unmount / fileId berubah / tampilan ditutup —
+  // JANGAN memasukkan `url` ke dependency, karena setUrl akan memicu cleanup dan
+  // merevoke blob yang baru saja dibuat (ERR_FILE_NOT_FOUND pada <img>/link PDF).
   useEffect(() => {
+    if (!open || !fileId) return undefined;
     let objectUrl;
-    if (open && fileId && !url) {
-      api
-        .get(`/files/${fileId}`, { responseType: "blob" })
-        .then(({ data }) => {
-          setIsPdf(data.type === "application/pdf");
-          objectUrl = URL.createObjectURL(data);
-          setUrl(objectUrl);
-        })
-        .catch(() => setUrl("error"));
-    }
+    let cancelled = false;
+    setUrl(null);
+    api
+      .get(`/files/${fileId}`, { responseType: "blob" })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setIsPdf(data.type === "application/pdf");
+        objectUrl = URL.createObjectURL(data);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl("error");
+      });
     return () => {
+      cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [open, fileId, url]);
+  }, [open, fileId]);
 
   if (!fileId) return <span className="text-sm text-muted-foreground">Tidak ada bukti</span>;
 
