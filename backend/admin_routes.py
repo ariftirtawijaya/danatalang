@@ -347,12 +347,17 @@ async def list_users(
     page_size: int = 20,
 ):
     query: dict = {}
-    if role:
-        query["role"] = {"$in": [r.strip() for r in role.split(",")]}
-    else:
-        query["role"] = {"$in": [ROLE_ADMIN, ROLE_LENDER, ROLE_SUPERADMIN, ROLE_BORROWER]}
+    requested_roles = [r.strip() for r in role.split(",") if r.strip()] if role else []
     if user["role"] == ROLE_ADMIN:
-        query["role"] = {"$in": [ROLE_LENDER, ROLE_BORROWER]}
+        allowed_roles = {ROLE_LENDER, ROLE_BORROWER}
+        if requested_roles:
+            if any(r not in allowed_roles for r in requested_roles):
+                raise HTTPException(status_code=403, detail="Admin tidak memiliki akses ke role tersebut")
+            query["role"] = {"$in": requested_roles}
+        else:
+            query["role"] = {"$in": [ROLE_LENDER, ROLE_BORROWER]}
+    else:
+        query["role"] = {"$in": requested_roles or [ROLE_ADMIN, ROLE_LENDER, ROLE_SUPERADMIN, ROLE_BORROWER]}
     if q:
         rx = re.escape(q)
         query["$or"] = [

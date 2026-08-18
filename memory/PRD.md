@@ -208,3 +208,10 @@ Prinsip: **TRANSACTION jika tersedia + IDEMPOTENT RECOVERY sebagai safety net** 
 - Verifikasi UI: WEBP 120x80, JPEG 120x80, PDF blob link valid, reload+buka ulang tetap tampil, blob direvoke setelah unmount (tidak leak). Testing agent iteration_18.json: 0 `ERR_FILE_NOT_FOUND` di /loans/{id}, /payments (staff), /collections, /profit-sharing (settlement & payout). Path lender `/admin-remittance` & lender `/payments` tidak punya data QA (komponen identik).
 - Regresi: iter21 6, iter20 18, iter19 17, pinjamku_flow 48, iter2 22, iter15 19 — semua hijau.
 - Catatan: ProofImage belum punya tombol "Tutup" (usulan reviewer, belum diminta user).
+
+### FIX authorization filter GET /api/users (iterasi 22)
+- Root cause: `list_users` menetapkan `query["role"]` dari parameter client, lalu **menimpanya** dengan `{"$in": [lender, borrower]}` bila pemanggilnya Admin. Akibatnya `/users?role=lender` milik Admin mengembalikan Pendana + Peminjam (menu Pendana tercampur).
+- Fix (backend, `admin_routes.py`): pola `requested_roles` + `allowed_roles`. Admin → allowed `{lender, borrower}`; bila meminta role di luar hak (termasuk kombinasi `lender,admin`) → **403** (tidak silent-drop); tanpa parameter → lender + borrower. Non-Admin (Superadmin) → filter client dihormati apa adanya, default semua role.
+- Test baru `tests/test_iter22_users_role_filter.py` (15): admin role=lender/borrower/lender,borrower, admin tanpa filter, 403 untuk admin/superadmin/lender,admin/borrower,superadmin, superadmin per-role & multi-role & tanpa filter, pencarian `q` tetap jalan, 401 tanpa auth, 403 untuk peminjam.
+- Regresi: iter22 15, iter4 7, pinjamku_flow 48, iter19 17, iter20 18, iter21 6, iter2 22 — semua hijau. Verifikasi UI sebagai Admin: kolom Role di menu Pendana 100% "Pendana" (desktop + mobile 390px).
+- Behavior lain yang berubah: satu-satunya perubahan adalah Admin sekarang menerima 403 saat meminta role admin/superadmin (sebelumnya 200 dengan hasil ditimpa). Lookup Admin di LoanDetail hanya dipakai Superadmin sehingga tidak terpengaruh.
